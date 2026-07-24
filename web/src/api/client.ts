@@ -1,0 +1,54 @@
+import axios from 'axios'
+
+const client = axios.create({
+  baseURL: '/api',
+  withCredentials: true,
+})
+
+export interface Hook {
+  id: string
+  name: string
+  command: string
+  working_dir: string
+  response_message: string
+  hmac_secret?: string
+  hmac_algorithm: string
+  pass_arguments: string[]
+  pass_headers: string[]
+  pass_payload_to: string
+  created_at: string
+  updated_at: string
+}
+
+export interface Execution {
+  id: number
+  hook_id: string
+  trigger_source: string
+  status: string
+  output: string
+  error: string
+  started_at: string
+  finished_at?: string
+}
+
+export const authApi = {
+  login: (password: string) => client.post('/auth/login', { password }),
+  logout: () => client.post('/auth/logout'),
+  check: () => client.get('/auth/check'),
+}
+
+export const hookApi = {
+  list: () => client.get<Hook[]>('/hooks'),
+  get: (id: string) => client.get<Hook>(`/hooks/${id}`),
+  create: (hook: Partial<Hook>) => client.post<Hook>('/hooks', hook),
+  update: (id: string, hook: Partial<Hook>) => client.put<Hook>(`/hooks/${id}`, hook),
+  delete: (id: string) => client.delete(`/hooks/${id}`),
+}
+
+export const executionApi = {
+  list: (params?: { limit?: number; offset?: number; hook_id?: string }) =>
+    client.get<Execution[]>('/executions', { params }),
+  get: (id: number) => client.get<Execution>(`/executions/${id}`),
+}
+
+export default client
