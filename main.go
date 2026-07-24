@@ -1,7 +1,16 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+
+	"github.com/songguangzhi/webhook-ui/internal/database"
+)
 
 func main() {
-	fmt.Println("webhook-ui starting...")
+	if err := database.Init("./data"); err != nil {
+		log.Fatal(err)
+	}
+	defer database.Close()
+	fmt.Println("database initialized")
 }
