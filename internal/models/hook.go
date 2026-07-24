@@ -14,9 +14,18 @@ func (s *StringArray) Scan(value interface{}) error {
 		*s = []string{}
 		return nil
 	}
-	bytes, ok := value.([]byte)
-	if !ok {
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
 		return errors.New("invalid type for StringArray")
+	}
+	if len(bytes) == 0 {
+		*s = []string{}
+		return nil
 	}
 	return json.Unmarshal(bytes, s)
 }
