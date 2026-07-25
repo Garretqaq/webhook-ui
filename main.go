@@ -38,14 +38,30 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	r.StaticFS("/assets", http.FS(frontendFS))
+	assetsFS, err := fs.Sub(frontendFS, "assets")
+	if err != nil {
+		log.Fatal(err)
+	}
+	r.StaticFS("/assets", http.FS(assetsFS))
 
 	r.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
-		if strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/hooks") {
+		// Static assets 404 if not found (don't serve index.html for missing JS/CSS)
+		if strings.HasPrefix(path, "/assets/") {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		// API routes always 404
+		if strings.HasPrefix(path, "/api") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
+		// Webhook trigger: POST /hooks/:id handled by route above, other methods 404
+		if strings.HasPrefix(path, "/hooks/") && c.Request.Method != http.MethodPost {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		// Serve SPA for all other paths (including /hooks for frontend routing)
 		data, err := fs.ReadFile(frontendFS, "index.html")
 		if err != nil {
 			c.String(http.StatusInternalServerError, "frontend not built")

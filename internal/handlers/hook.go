@@ -17,11 +17,16 @@ func NewHookHandler() *HookHandler {
 	return &HookHandler{}
 }
 
+type HookListItem struct {
+	models.Hook
+	HMACEnabled bool `json:"hmac_enabled"`
+}
+
 func (h *HookHandler) List(c *gin.Context) {
 	rows, err := database.DB.Query(`
 		SELECT id, name, command, working_dir, response_message,
 		       hmac_algorithm, pass_arguments, pass_headers, pass_payload_to,
-		       created_at, updated_at
+		       created_at, updated_at, hmac_secret != '' as hmac_enabled
 		FROM hooks ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -30,23 +35,23 @@ func (h *HookHandler) List(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var hooks []models.Hook
+	var items []HookListItem
 	for rows.Next() {
-		var hook models.Hook
+		var item HookListItem
 		err := rows.Scan(
-			&hook.ID, &hook.Name, &hook.Command, &hook.WorkingDir,
-			&hook.ResponseMessage, &hook.HMACAlgorithm,
-			&hook.PassArguments, &hook.PassHeaders, &hook.PassPayloadTo,
-			&hook.CreatedAt, &hook.UpdatedAt,
+			&item.ID, &item.Name, &item.Command, &item.WorkingDir,
+			&item.ResponseMessage, &item.HMACAlgorithm,
+			&item.PassArguments, &item.PassHeaders, &item.PassPayloadTo,
+			&item.CreatedAt, &item.UpdatedAt, &item.HMACEnabled,
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		hooks = append(hooks, hook)
+		items = append(items, item)
 	}
 
-	c.JSON(http.StatusOK, hooks)
+	c.JSON(http.StatusOK, items)
 }
 
 func (h *HookHandler) Get(c *gin.Context) {
@@ -124,7 +129,7 @@ func (h *HookHandler) Update(c *gin.Context) {
 		return
 	}
 
-	_, err := database.DB.Exec(`
+	result, err := database.DB.Exec(`
 		UPDATE hooks SET name=?, command=?, working_dir=?, response_message=?,
 		                hmac_secret=?, hmac_algorithm=?, pass_arguments=?, pass_headers=?,
 		                pass_payload_to=?, updated_at=?
@@ -138,15 +143,28 @@ func (h *HookHandler) Update(c *gin.Context) {
 		return
 	}
 
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "hook not found"})
+		return
+	}
+
 	c.JSON(http.StatusOK, hook)
 }
 
 func (h *HookHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
-	_, err := database.DB.Exec("DELETE FROM hooks WHERE id = ?", id)
+	result, err := database.DB.Exec("DELETE FROM hooks WHERE id = ?", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "hook not found"})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
 }

@@ -29,16 +29,26 @@ func (e *Executor) isAllowed(cmd string) bool {
 	}
 	baseCmd := parts[0]
 
+	// Resolve to absolute path: if no slash, look up in PATH
+	if !strings.Contains(baseCmd, "/") {
+		resolved, err := exec.LookPath(baseCmd)
+		if err != nil {
+			return false
+		}
+		baseCmd = resolved
+	}
+
 	absPath, err := filepath.Abs(baseCmd)
 	if err != nil {
-		absPath = baseCmd
+		return false
 	}
 
 	for _, allowed := range e.allowedCommands {
-		if absPath == allowed || strings.HasPrefix(absPath, allowed+string(os.PathSeparator)) {
+		if absPath == allowed {
 			return true
 		}
-		if strings.HasPrefix(absPath, allowed) {
+		// Directory prefix match: allowed is a directory, command inside it
+		if strings.HasPrefix(absPath, allowed+string(os.PathSeparator)) {
 			return true
 		}
 	}

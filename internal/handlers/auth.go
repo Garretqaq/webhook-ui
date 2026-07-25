@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"net/http"
 
 	"github.com/gin-contrib/sessions"
@@ -27,7 +28,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	if req.Password != h.adminPassword {
+	if subtle.ConstantTimeCompare([]byte(req.Password), []byte(h.adminPassword)) != 1 {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid password"})
 		return
 	}

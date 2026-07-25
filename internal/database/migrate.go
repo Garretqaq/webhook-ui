@@ -41,10 +41,6 @@ func Migrate() error {
 			finished_at DATETIME,
 			FOREIGN KEY (hook_id) REFERENCES hooks(id) ON DELETE CASCADE
 		)`,
-		`CREATE TABLE IF NOT EXISTS config (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL
-		)`,
 		`CREATE INDEX IF NOT EXISTS idx_executions_hook_id ON executions(hook_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_executions_started_at ON executions(started_at DESC)`,
 	}
