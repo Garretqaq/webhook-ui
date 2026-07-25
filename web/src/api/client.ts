@@ -20,6 +20,10 @@ export interface Hook {
   updated_at: string
 }
 
+export interface HookListItem extends Hook {
+  hmac_enabled: boolean
+}
+
 export interface Execution {
   id: number
   hook_id: string
@@ -38,7 +42,7 @@ export const authApi = {
 }
 
 export const hookApi = {
-  list: () => client.get<Hook[]>('/hooks'),
+  list: () => client.get<HookListItem[]>('/hooks'),
   get: (id: string) => client.get<Hook>(`/hooks/${id}`),
   create: (hook: Partial<Hook>) => client.post<Hook>('/hooks', hook),
   update: (id: string, hook: Partial<Hook>) => client.put<Hook>(`/hooks/${id}`, hook),

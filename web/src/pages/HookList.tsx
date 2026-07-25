@@ -3,10 +3,10 @@ import { Table, Button, Space, Tag, message, Popconfirm } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { hookApi } from '../api/client'
-import type { Hook } from '../api/client'
+import type { HookListItem } from '../api/client'
 
 export default function HookList() {
-  const [hooks, setHooks] = useState<Hook[]>([])
+  const [hooks, setHooks] = useState<HookListItem[]>([])
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
@@ -63,8 +63,8 @@ export default function HookList() {
     {
       title: 'HMAC',
       key: 'hmac',
-      render: (_: any, record: Hook) => (
-        record.hmac_secret ? <Tag color="green">启用</Tag> : <Tag>未启用</Tag>
+      render: (_: any, record: HookListItem) => (
+        record.hmac_enabled ? <Tag color="green">启用</Tag> : <Tag>未启用</Tag>
       ),
     },
     {
@@ -76,7 +76,7 @@ export default function HookList() {
     {
       title: '操作',
       key: 'action',
-      render: (_: any, record: Hook) => (
+      render: (_: any, record: HookListItem) => (
         <Space>
           <Button
             type="text"
