@@ -44,9 +44,16 @@ docker run -d \
 |------|------|--------|
 | `PORT` | 服务端口 | `9000` |
 | `DATA_DIR` | 数据目录 | `./data` |
+| `ADMIN_USERNAME` | 管理员用户名 | `admin` |
 | `ADMIN_PASSWORD` | 管理员密码 | (必填) |
 | `SESSION_SECRET` | Session 密钥 | 自动生成 |
+| `TRUSTED_PROXIES` | 可信代理 IP，逗号分隔（反代部署时配置） | `127.0.0.1` |
+| `LOGIN_MAX_FAILURES` | 同一用户名+IP 连续失败多少次后锁定 | `5` |
+| `LOGIN_LOCKOUT_MINUTES` | 登录锁定时长（分钟） | `15` |
+| `LOGIN_RATE_LIMIT_PER_MIN` | 每 IP 每分钟登录尝试上限 | `10` |
 | `ALLOWED_COMMANDS` | 允许的命令前缀，逗号分隔 | `/usr/bin/git,/usr/bin/curl,/bin/bash,/bin/sh,/usr/bin/python3` |
+
+**登录防爆破**：同一用户名+IP 连续失败锁定（默认 5 次锁 15 分钟，返回 429）；`/api/login` 每 IP 每分钟最多 10 次尝试。锁定状态存内存，重启清零。
 
 **注意**：默认值包含 bash/sh/python3 解释器（脚本管理功能需要）。这意味着能登录控制台的管理员本质上可以执行任意命令——这符合本工具的定位，但请勿将控制台暴露给不可信网络。如不需要脚本功能，可用 `ALLOWED_COMMANDS` 收紧。
 

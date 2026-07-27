@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -33,6 +34,9 @@ func main() {
 	defer database.Close()
 
 	r := gin.Default()
+	if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		log.Fatalf("invalid TRUSTED_PROXIES: %v", err)
+	}
 
 	store := cookie.NewStore([]byte(cfg.SessionSecret))
 	r.Use(sessions.Sessions(middleware.SessionKey, store))
@@ -73,7 +77,10 @@ func main() {
 		c.Data(http.StatusOK, "text/html; charset=utf-8", data)
 	})
 
-	authHandler := handlers.NewAuthHandler(cfg.AdminPassword)
+	loginGuard := middleware.NewLoginGuard(cfg.LoginMaxFailures, time.Duration(cfg.LoginLockoutMinutes)*time.Minute)
+	loginLimiter := middleware.NewRateLimiter(cfg.LoginRateLimitPerMin, time.Minute)
+
+	authHandler := handlers.NewAuthHandler(cfg.AdminUsername, cfg.AdminPassword, loginGuard)
 	hookHandler := handlers.NewHookHandler()
 	executor := services.NewExecutor(cfg.AllowedCommands, cfg.DataDir)
 	webhookHandler := handlers.NewWebhookHandler(executor)
@@ -81,7 +88,7 @@ func main() {
 	scriptHandler := handlers.NewScriptHandler(executor)
 	sshHostHandler := handlers.NewSSHHostHandler()
 
-	r.POST("/api/auth/login", authHandler.Login)
+	r.POST("/api/auth/login", middleware.LoginRateLimit(loginLimiter), authHandler.Login)
 	r.GET("/api/auth/check", authHandler.Check)
 
 	r.POST("/hooks/:id", webhookHandler.Trigger)

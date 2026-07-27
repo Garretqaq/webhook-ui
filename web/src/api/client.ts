@@ -80,7 +80,7 @@ export interface SSHHostTestResult {
 }
 
 export const authApi = {
-  login: (password: string) => client.post('/auth/login', { password }),
+  login: (username: string, password: string) => client.post('/auth/login', { username, password }),
   logout: () => client.post('/auth/logout'),
   check: () => client.get('/auth/check'),
 }
