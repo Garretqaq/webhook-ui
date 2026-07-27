@@ -27,6 +27,10 @@
 
 **适合谁用**：自建 CI/CD 触发、运维自动化、Git 仓库事件驱动机器执行、需要在隔离主机上跑脚本的小团队与个人。
 
+## 🖼️ 界面预览
+
+![Webhook UI 控制台](docs/screenshots/dashboard.png)
+
 ## 📦 安装
 
 ### Docker（最快）
