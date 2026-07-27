@@ -1,51 +1,91 @@
-# Webhook UI
+<div align="center">
 
-基于 Go 的 Webhook 管理工具，带 Web 控制台。
+# 🪝 Webhook UI
 
-## 功能
+> Go + React 的自托管 Webhook 管理工具：接收 Webhook → 执行脚本/命令，带 Web 控制台、SSH 远程执行与执行日志。
 
-- Webhook 接收并执行 shell 命令
-- 脚本管理：脚本存数据库，支持 bash/sh/python3，页内试运行
-- SSH 远程执行：脚本可在配置的远端主机上运行（TOFU host key 校验）
-- HMAC 签名验证 (SHA1/SHA256/SHA512)
-- 参数传递 (query/header/payload)
-- 执行日志查看
-- 管理员登录认证
-- 命令白名单安全控制
+单二进制部署 · SQLite 存储 · HMAC 签名校验 · Docker 镜像开箱即用
 
-## 快速开始
+[![Version](https://img.shields.io/badge/version-0.2.0-blue)](#)
+[![License](https://img.shields.io/badge/license-MIT-green)](#)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8)](#)
+[![React](https://img.shields.io/badge/React-19-61DAFB)](#)
 
-### 本地运行
+</div>
 
-```bash
-# 构建前端
-cd web && npm install && npm run build && cd ..
+---
 
-# 运行
-export ADMIN_PASSWORD=your-password
-go run main.go
-```
+## ✨ 项目亮点
 
-访问 http://localhost:9000
+- **一键自托管**：单二进制 + 前端 `go:embed` 打包，零外部依赖（SQLite 内建），克隆即用。
+- **Web 控制台**：可视化维护 Hook、脚本、SSH 主机，看执行日志，不用碰服务器文件。
+- **脚本管理**：脚本存数据库，支持 `bash`/`sh`/`python3`，页内试运行当前内容（无需保存）。
+- **SSH 远程执行**：脚本通过 stdin 在远端跑，不落盘；Host Key 采用 TOFU 校验防劫持。
+- **多种触发校验**：固定 Token 或 HMAC 签名（SHA1/SHA256/SHA512），原生兼容 GitHub / GitLab。
+- **命令白名单**：`ALLOWED_COMMANDS` 限定可执行解释器，收口攻击面。
+- **登录防爆破**：用户名+IP 失败锁定 + 每 IP 限速，暴力破解难以为继。
 
-### Docker 运行
+**适合谁用**：自建 CI/CD 触发、运维自动化、Git 仓库事件驱动机器执行、需要在隔离主机上跑脚本的小团队与个人。
+
+## 📦 安装
+
+### Docker（最快）
 
 ```bash
 docker run -d \
+  --name webhook-ui \
   -p 9000:9000 \
   -e ADMIN_PASSWORD=your-password \
   -v webhook-data:/app/data \
   registry.cn-hangzhou.aliyuncs.com/dato/webhook-ui:latest
 ```
 
-## 环境变量
+### 二进制
+
+到 [Releases](../../releases) 下载对应平台产物（linux/darwin/windows · amd64/arm64），直接运行：
+
+```bash
+export ADMIN_PASSWORD=your-password
+./webhook-ui
+```
+
+### 源码构建
+
+```bash
+git clone https://github.com/songguangzhi/webhook-ui.git
+cd webhook-ui
+cd web && npm ci && npm run build && cd ..
+go build -ldflags "-X main.version=$(cat VERSION)" -o webhook-ui .
+```
+
+## 🚀 快速开始
+
+启动后访问 `http://localhost:9000`，用 `ADMIN_USERNAME`（默认 `admin`）+ `ADMIN_PASSWORD` 登录。
+
+1. **建脚本**（可选）：脚本管理页 → 新建，写内容，点「试运行」验证。
+2. **建 Hook**：Hook 管理页 → 新建，二选一填「自由命令」或「绑定脚本」，配置 Token / HMAC。
+3. **触发**：
+
+```bash
+# 固定 Token
+curl -X POST http://localhost:9000/hooks/<hook-id> \
+  -H "X-Token: your-token"
+
+# HMAC 签名（通用）
+curl -X POST http://localhost:9000/hooks/<hook-id> \
+  -H "X-Signature: $(printf 'payload' | openssl dgst -sha256 -hmac 'your-secret' -binary | xxd -p -c 256)"
+```
+
+4. **看结果**：执行日志页查看输出与状态。
+
+## ⚙️ 环境变量
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `PORT` | 服务端口 | `9000` |
-| `DATA_DIR` | 数据目录 | `./data` |
+| `DATA_DIR` | 数据目录（SQLite + 临时脚本） | `./data` |
 | `ADMIN_USERNAME` | 管理员用户名 | `admin` |
-| `ADMIN_PASSWORD` | 管理员密码 | (必填) |
+| `ADMIN_PASSWORD` | 管理员密码 | **（必填）** |
 | `SESSION_SECRET` | Session 密钥 | 自动生成 |
 | `TRUSTED_PROXIES` | 可信代理 IP，逗号分隔（反代部署时配置） | `127.0.0.1` |
 | `LOGIN_MAX_FAILURES` | 同一用户名+IP 连续失败多少次后锁定 | `5` |
@@ -53,89 +93,132 @@ docker run -d \
 | `LOGIN_RATE_LIMIT_PER_MIN` | 每 IP 每分钟登录尝试上限 | `10` |
 | `ALLOWED_COMMANDS` | 允许的命令前缀，逗号分隔 | `/usr/bin/git,/usr/bin/curl,/bin/bash,/bin/sh,/usr/bin/python3` |
 
-**登录防爆破**：同一用户名+IP 连续失败锁定（默认 5 次锁 15 分钟，返回 429）；`/api/login` 每 IP 每分钟最多 10 次尝试。锁定状态存内存，重启清零。
+> **登录防爆破**：同一用户名+IP 连续失败锁定（默认 5 次锁 15 分钟，返回 429）；`/api/login` 每 IP 每分钟最多 10 次。锁定状态存内存，重启清零。
+>
+> ⚠️ **安全提示**：默认白名单包含 bash/sh/python3 解释器（脚本功能所需）。能登录控制台的管理员本质可执行任意命令——**请勿将控制台暴露给不可信网络**。无需脚本功能时用 `ALLOWED_COMMANDS` 收紧。
 
-**注意**：默认值包含 bash/sh/python3 解释器（脚本管理功能需要）。这意味着能登录控制台的管理员本质上可以执行任意命令——这符合本工具的定位，但请勿将控制台暴露给不可信网络。如不需要脚本功能，可用 `ALLOWED_COMMANDS` 收紧。
+## 🧭 使用示例
 
-## 脚本管理
+### 传参给脚本/命令
 
-「脚本管理」页维护可复用的脚本（名称、解释器 bash/sh/python3、内容），无需登录服务器放置文件。编辑页可直接试运行当前内容（无需保存）。
+Hook 触发时，Webhook 数据按配置注入：
 
-- Hook 配置时二选一：自由命令 或 绑定脚本，互斥
-- 本地执行：脚本写入 `DATA_DIR/tmp` 临时文件（0700）运行，跑完删除；解释器必须命中 `ALLOWED_COMMANDS` 白名单
-- 传参与自由命令一致：`$1/$2...`（Payload 字段）、`QUERY_*`/`HEADER_*` 环境变量、`PAYLOAD`；参数判断逻辑写在脚本内
-- 被 Hook 引用的脚本不可删除
+| 来源 | 注入方式 |
+|------|----------|
+| Payload 字段 | `$1` `$2` ...（位置参数） |
+| Query 参数 | `QUERY_<NAME>` 环境变量 |
+| 请求头 | `HEADER_<NAME>` 环境变量 |
+| 原始 Payload | `PAYLOAD` 环境变量（或按 `pass_payload_to` 注入 stdin/参数） |
 
-## SSH 远程执行
+示例脚本（拉取代码并部署）：
 
-脚本的「执行位置」可选 SSH 主机，脚本内容通过 stdin 在远端执行（`bash -s` 等），不写入远端磁盘。
+```bash
+#!/bin/bash
+set -e
+cd "$1"            # $1 = Payload 字段，例如仓库路径
+git pull origin main
+./deploy.sh
+```
 
-「SSH 主机」页维护连接信息（host/port/user，私钥或密码认证），配完可点「测试连接」验证。
+### GitHub Webhook 对接
 
-**安全说明**：
+GitHub Push 事件 → Hook 自动校验 `X-Hub-Signature-256`（HMAC SHA256）。在 Hook 配置填入与 GitHub 仓库 Webhook secret 相同的 `HMACSecret`，算法选 `sha256` 即可。
 
-- 凭据（私钥/密码）存储在服务端本地 SQLite（`DATA_DIR`），请保护好数据目录
-- Host Key 采用 TOFU：首次连接自动记录服务器公钥，之后强校验，公钥变更会拒绝连接（可能是劫持或服务器重装）。可在主机编辑页查看/清除/手动预填
-- **公网环境建议**：先用 `ssh-keyscan 主机` 获取公钥并手动预填，避免首次连接被中间人截获
-- 远程执行不支持 Hook 的「工作目录」设置（仅本地生效）
-- 被脚本引用的主机不可删除
+### SSH 远程执行
 
-## Docker 中控制宿主机
+脚本「执行位置」选 SSH 主机 → 脚本内容通过 stdin 远端执行（`bash -s`），不写远端磁盘。SSH 主机页可「测试连接」验证凭据。
 
-脚本/命令默认运行在容器内，碰不到宿主机。三种方案：
+> **公网环境建议**：先用 `ssh-keyscan <host>` 取公钥并手动预填，避免首次连接被中间人截获。
 
-1. **挂载目录**（推荐）：`docker run -v /宿主机/目录:/workspace ...`，脚本操作 `/workspace` 即操作宿主机文件
-2. **挂 docker.sock**：`docker run -v /var/run/docker.sock:/var/run/docker.sock ...`，脚本内可执行 `docker` 命令（容器内需有 docker CLI）。等价于宿主机 root 权限，风险自负
-3. **SSH 回连**：用「SSH 远程执行」功能把宿主机配为一台 SSH 主机，脚本在宿主机上跑——推荐此方式，隔离不破、权限可控
-4. **不用 Docker**：单二进制直接跑在宿主机上，脚本天然就是宿主机命令
+## 📁 项目结构
 
-## API
+```
+webhook-ui/
+├── main.go                  # 入口、路由、版本注入
+├── embed.go                 # go:embed 前端产物
+├── internal/
+│   ├── config/              # 环境变量加载
+│   ├── database/            # SQLite 初始化与迁移
+│   ├── models/              # Hook / Script / SSHHost / Execution
+│   ├── handlers/            # HTTP 处理器（auth/hook/script/ssh/execution）
+│   ├── middleware/          # auth / login_guard / rate_limiter
+│   └── services/            # executor / ssh / hmac
+├── web/                     # React 19 + Antd 6 + Vite 前端
+│   └── src/
+│       ├── pages/           # HookList / ScriptEdit / SSHHostList / ExecutionLogs / Login
+│       └── api/             # axios client
+├── .github/workflows/       # docker-build-push.yml / release.yml
+├── Dockerfile
+└── VERSION                  # 语义化版本
+```
+
+## 🐳 Docker 中控制宿主机
+
+脚本默认跑在容器内，碰不到宿主机。常见方案：
+
+1. **挂载目录**（推荐）：`-v /宿主机/目录:/workspace`，脚本操作 `/workspace` 即操作宿主文件。
+2. **挂 docker.sock**：`-v /var/run/docker.sock:/var/run/docker.sock`，脚本内可跑 `docker`（等价宿主 root，风险自负）。
+3. **SSH 回连**：用「SSH 远程执行」把宿主机配成 SSH 主机，脚本在宿主上跑——隔离不破、权限可控。
+4. **不用 Docker**：单二进制直接跑宿主机，脚本天然就是宿主命令。
+
+## 📡 API
 
 ### Webhook 触发
 
 ```
-POST /hooks/:id
+POST /hooks/:id          # 也支持 GET（见 0.2.0+）
 ```
 
-支持两种访问校验（可单独或同时使用）:
+访问校验二选一或同用：
 
-**固定 Token**：Hook 配置固定 Token 后，请求需带 `X-Token` header 或 `?token=` 查询参数，值相等才执行。适合不能计算 HMAC 的调用方。
+- **固定 Token**：配置 Token 后，请求带 `X-Token` header 或 `?token=`，值相等才执行。适合不能算 HMAC 的调用方。
+- **HMAC 签名**：
+  - GitHub：`X-Hub-Signature-256`
+  - GitLab：`X-Gitlab-Token`
+  - 通用：`X-Signature`
 
-**HMAC 签名**：
-- GitHub: `X-Hub-Signature-256` header
-- GitLab: `X-Gitlab-Token` header
-- 通用: `X-Signature` header
+### 管理 API（需登录）
 
-### 管理 API
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/api/auth/login` · `/api/auth/logout` | 登录 / 登出 |
+| `GET/POST` | `/api/hooks` | Hook 列表 / 创建 |
+| `GET/PUT/DELETE` | `/api/hooks/:id` | 详情 / 更新 / 删除 |
+| `GET` | `/api/executions` · `/api/executions/:id` | 执行日志 |
+| `GET/POST/PUT/DELETE` | `/api/scripts` | 脚本管理 |
+| `POST` | `/api/scripts/test` | 试运行脚本 |
+| `GET/POST/PUT/DELETE` | `/api/ssh-hosts` | SSH 主机管理 |
+| `POST` | `/api/ssh-hosts/test` | 测试连接 |
 
-需要登录:
-- `POST /api/auth/login` - 登录
-- `POST /api/auth/logout` - 登出
-- `GET /api/hooks` - Hook 列表
-- `POST /api/hooks` - 创建 Hook
-- `GET /api/hooks/:id` - Hook 详情
-- `PUT /api/hooks/:id` - 更新 Hook
-- `DELETE /api/hooks/:id` - 删除 Hook
-- `GET /api/executions` - 执行日志
-- `GET /api/executions/:id` - 执行详情
-- `GET/POST/PUT/DELETE /api/scripts` - 脚本管理
-- `POST /api/scripts/test` - 试运行脚本
-- `GET/POST/PUT/DELETE /api/ssh-hosts` - SSH 主机管理
-- `POST /api/ssh-hosts/test` - 测试连接
+## 🛠️ 开发
 
-## 开发
-
-### 后端
+后端：
 
 ```bash
-go run main.go
+go run main.go          # :9000
+go test ./...           # 单测
 ```
 
-### 前端 (开发模式)
+前端（开发模式，自动代理 `/api` 和 `/hooks` 到 `localhost:9000`）：
 
 ```bash
 cd web
-npm run dev
+npm run dev             # Vite dev server
+npm run lint            # oxlint
 ```
 
-前端开发服务器会自动代理 `/api` 和 `/hooks` 到 `localhost:9000`。
+## 📦 打包发版
+
+> 见 `CLAUDE.md` 完整约定。简要：
+
+1. 升 `VERSION`（语义化，默认升 minor）→ commit → push main。
+2. `git tag vx.y.z && git push origin vx.y.z`（tag 必须带 `v` 前缀）。
+3. GitHub Actions 自动：构建推送 Docker 镜像到阿里云 ACR + 前端构建交叉编译发 GitHub Release。
+
+## 🤝 贡献
+
+欢迎 Issue / PR。提交前请跑 `go test ./...` 与 `cd web && npm run lint`。
+
+## 📝 License
+
+MIT
