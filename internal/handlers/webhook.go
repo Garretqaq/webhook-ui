@@ -108,15 +108,15 @@ func (h *WebhookHandler) execute(hook *models.Hook, env map[string]string, args 
 
 	var script models.Script
 	err := database.DB.QueryRow(`
-		SELECT interpreter, content FROM scripts WHERE id = ?
-	`, hook.ScriptID).Scan(&script.Interpreter, &script.Content)
+		SELECT interpreter, content, ssh_host_id FROM scripts WHERE id = ?
+	`, hook.ScriptID).Scan(&script.Interpreter, &script.Content, &script.SSHHostID)
 	if err != nil {
 		return &services.ExecuteResult{
 			Success: false,
 			Error:   fmt.Sprintf("script not found: %s", hook.ScriptID),
 		}
 	}
-	return h.executor.ExecuteScript(script.Interpreter, script.Content, args, env, hook.WorkingDir)
+	return runScript(h.executor, script.Interpreter, script.Content, script.SSHHostID, args, env, hook.WorkingDir)
 }
 
 func (h *WebhookHandler) buildCommandInput(hook *models.Hook, c *gin.Context, payload []byte) (map[string]string, []string) {

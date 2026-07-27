@@ -45,8 +45,13 @@ export interface Script {
   interpreter: string
   content: string
   description: string
+  ssh_host_id: string
   created_at: string
   updated_at: string
+}
+
+export interface ScriptListItem extends Script {
+  ssh_host_name: string
 }
 
 export interface ScriptTestResult {
@@ -95,12 +100,12 @@ export const executionApi = {
 }
 
 export const scriptApi = {
-  list: () => client.get<Script[]>('/scripts'),
+  list: () => client.get<ScriptListItem[]>('/scripts'),
   get: (id: string) => client.get<Script>(`/scripts/${id}`),
   create: (script: Partial<Script>) => client.post<Script>('/scripts', script),
   update: (id: string, script: Partial<Script>) => client.put<Script>(`/scripts/${id}`, script),
   delete: (id: string) => client.delete(`/scripts/${id}`),
-  test: (data: { interpreter: string; content: string; args: string[] }) =>
+  test: (data: { interpreter: string; content: string; args: string[]; ssh_host_id?: string }) =>
     client.post<ScriptTestResult>('/scripts/test', data),
 }
 

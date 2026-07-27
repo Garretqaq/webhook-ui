@@ -3,6 +3,7 @@ package services
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 // startTestServer runs an in-process SSH server accepting password
 // "secret" for any user, and returns its listener address and host key.
+// "echo ok" replies ok; any other command echoes its stdin back.
 func startTestServer(t *testing.T) (addr string, hostKey ssh.PublicKey) {
 	t.Helper()
 
@@ -68,7 +70,12 @@ func startTestServer(t *testing.T) (addr string, hostKey ssh.PublicKey) {
 						for req := range requests {
 							if req.Type == "exec" {
 								req.Reply(true, nil)
-								channel.Write([]byte("ok\n"))
+								cmd := string(req.Payload[4:]) // skip uint32 length prefix
+								if cmd == "echo ok" {
+									channel.Write([]byte("ok\n"))
+								} else {
+									io.Copy(channel, channel) // echo stdin
+								}
 								channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
 								channel.Close()
 							} else {
@@ -159,6 +166,92 @@ func TestDialBadPassword(t *testing.T) {
 	_, err := DialSSH(h)
 	if err == nil {
 		t.Fatal("dial with wrong password must fail")
+	}
+}
+
+func TestExecuteScriptSSHPipesContentViaStdin(t *testing.T) {
+	addr, _ := startTestServer(t)
+	h := testHost(addr)
+
+	result, err := DialSSH(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Client.Close()
+
+	content := "echo hello from script"
+	execResult := ExecuteScriptSSH(result.Client, "bash", content, nil, nil)
+	if !execResult.Success {
+		t.Fatalf("expected success, got: %s", execResult.Error)
+	}
+	if !strings.Contains(execResult.Output, content) {
+		t.Errorf("expected script content piped via stdin, got: %q", execResult.Output)
+	}
+}
+
+func TestExecuteScriptSSHBuildsCommand(t *testing.T) {
+	// bash/sh get "-s", python3 gets "-"
+	if got := sshScriptCommand("bash", nil, nil); !strings.HasPrefix(got, "bash -s --") {
+		t.Errorf("bash command prefix wrong: %q", got)
+	}
+	if got := sshScriptCommand("python3", nil, nil); !strings.HasPrefix(got, "python3 -") {
+		t.Errorf("python3 command prefix wrong: %q", got)
+	}
+}
+
+func TestShellEscape(t *testing.T) {
+	cases := map[string]string{
+		"simple":    "'simple'",
+		"with space": "'with space'",
+		"it's":      "'it'\\''s'",
+		"":          "''",
+	}
+	for in, want := range cases {
+		if got := shellEscape(in); got != want {
+			t.Errorf("shellEscape(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	// env and args are escaped into the command
+	got := sshScriptCommand("bash", []string{"a b"}, map[string]string{"MY_VAR": "x'y"})
+	if !strings.Contains(got, "MY_VAR='x'\\''y'") {
+		t.Errorf("env not escaped: %q", got)
+	}
+	if !strings.Contains(got, "-- 'a b'") {
+		t.Errorf("args not escaped: %q", got)
+	}
+}
+
+func TestExecuteScriptSSHRejectsInvalidInterpreter(t *testing.T) {
+	addr, _ := startTestServer(t)
+	h := testHost(addr)
+
+	result, err := DialSSH(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Client.Close()
+
+	execResult := ExecuteScriptSSH(result.Client, "bash; touch /tmp/pwn", "echo hi", nil, nil)
+	if execResult.Success {
+		t.Fatal("expected rejection of non-enum interpreter")
+	}
+}
+
+func TestSSHScriptCommandSkipsInvalidEnvKeys(t *testing.T) {
+	got := sshScriptCommand("bash", nil, map[string]string{
+		"GOOD_KEY":      "1",
+		"BAD KEY":       "2",
+		"X=touch /tmp":  "3",
+		"9LEADING_DIGIT": "4",
+	})
+	if !strings.Contains(got, "GOOD_KEY='1'") {
+		t.Errorf("valid key missing: %q", got)
+	}
+	for _, bad := range []string{"BAD KEY", "touch", "9LEADING_DIGIT"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("invalid key %q leaked into command: %q", bad, got)
+		}
 	}
 }
 

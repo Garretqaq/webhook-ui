@@ -2,8 +2,9 @@ package handlers
 
 import (
 	"database/sql"
-	"log"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -127,6 +128,30 @@ func (h *SSHHostHandler) Update(c *gin.Context) {
 
 func (h *SSHHostHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
+
+	rows, err := database.DB.Query("SELECT name FROM scripts WHERE ssh_host_id = ?", id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	var scriptNames []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		scriptNames = append(scriptNames, name)
+	}
+	rows.Close()
+	if len(scriptNames) > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": fmt.Sprintf("主机被以下脚本引用，无法删除: %s", strings.Join(scriptNames, ", ")),
+		})
+		return
+	}
+
 	result, err := database.DB.Exec("DELETE FROM ssh_hosts WHERE id = ?", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -171,10 +196,8 @@ func (h *SSHHostHandler) Test(c *gin.Context) {
 	}
 
 	// TOFU: persist the learned key when testing a saved host.
-	if result.LearnedHostKey != "" && host.ID != "" {
-		if _, err := database.DB.Exec("UPDATE ssh_hosts SET host_key=? WHERE id=?", result.LearnedHostKey, host.ID); err != nil {
-			log.Printf("persist learned host key for %s: %v", host.ID, err)
-		}
+	if host.ID != "" {
+		persistLearnedHostKey(host.ID, result.LearnedHostKey)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

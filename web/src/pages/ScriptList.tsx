@@ -3,10 +3,10 @@ import { Table, Button, Space, Tag, message, Popconfirm } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { scriptApi } from '../api/client'
-import type { Script } from '../api/client'
+import type { ScriptListItem } from '../api/client'
 
 export default function ScriptList() {
-  const [scripts, setScripts] = useState<Script[]>([])
+  const [scripts, setScripts] = useState<ScriptListItem[]>([])
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
@@ -49,6 +49,14 @@ export default function ScriptList() {
       render: (interpreter: string) => <Tag color="blue">{interpreter}</Tag>,
     },
     {
+      title: '执行位置',
+      key: 'location',
+      render: (_: any, r: ScriptListItem) =>
+        r.ssh_host_id
+          ? <Tag color="purple">SSH: {r.ssh_host_name || r.ssh_host_id}</Tag>
+          : <Tag>本地</Tag>,
+    },
+    {
       title: '描述',
       dataIndex: 'description',
       key: 'description',
@@ -63,7 +71,7 @@ export default function ScriptList() {
     {
       title: '操作',
       key: 'action',
-      render: (_: any, record: Script) => (
+      render: (_: any, record: ScriptListItem) => (
         <Space>
           <Button
             type="text"

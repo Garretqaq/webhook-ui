@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -109,4 +111,93 @@ func RunCommand(client *ssh.Client, command string) (string, error) {
 		return stdout.String(), fmt.Errorf("%w: %s", err, stderr.String())
 	}
 	return stdout.String(), nil
+}
+
+// ExecuteScriptSSH runs script content on the remote host by piping it to
+// the interpreter's stdin (bash -s / sh -s / python3 -). Nothing is written
+// to the remote filesystem. Execution is bounded by the same 5 minute
+// timeout as local execution.
+func ExecuteScriptSSH(client *ssh.Client, interpreter, content string, args []string, env map[string]string) *ExecuteResult {
+	if !models.IsValidInterpreter(interpreter) {
+		return &ExecuteResult{Success: false, Error: fmt.Sprintf("invalid interpreter: %s", interpreter)}
+	}
+
+	session, err := client.NewSession()
+	if err != nil {
+		return &ExecuteResult{Success: false, Error: err.Error()}
+	}
+
+	var stdout, stderr bytes.Buffer
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+	session.Stdin = strings.NewReader(content)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- session.Run(sshScriptCommand(interpreter, args, env))
+	}()
+
+	select {
+	case err := <-done:
+		session.Close()
+		result := &ExecuteResult{
+			Output: stdout.String(),
+			Error:  stderr.String(),
+		}
+		if err != nil {
+			result.Success = false
+			if result.Error == "" {
+				result.Error = err.Error()
+			}
+		} else {
+			result.Success = true
+		}
+		return result
+	case <-time.After(5 * time.Minute):
+		session.Close()
+		return &ExecuteResult{
+			Success: false,
+			Error:   "execution timeout (5 minutes)",
+		}
+	}
+}
+
+// sshScriptCommand builds the remote command: env assignments prefix the
+// interpreter call, args follow after the stdin-script flag. Env keys that
+// are not valid shell identifiers are skipped — query-derived keys come
+// from the external caller and must never reach the shell raw.
+var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func sshScriptCommand(interpreter string, args []string, env map[string]string) string {
+	var b strings.Builder
+	// sorted for deterministic output
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		if envKeyPattern.MatchString(k) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(shellEscape(env[k]))
+		b.WriteByte(' ')
+	}
+
+	b.WriteString(interpreter)
+	if interpreter == "python3" {
+		b.WriteString(" -")
+	} else {
+		b.WriteString(" -s --")
+	}
+	for _, a := range args {
+		b.WriteByte(' ')
+		b.WriteString(shellEscape(a))
+	}
+	return b.String()
+}
+
+func shellEscape(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

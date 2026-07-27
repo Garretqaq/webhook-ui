@@ -2,7 +2,7 @@ package database
 
 import "fmt"
 
-const schemaVersion = 5
+const schemaVersion = 6
 
 func Migrate() error {
 	var version int
@@ -76,6 +76,9 @@ func Migrate() error {
 		},
 		{ // 4 -> 5
 			`ALTER TABLE hooks ADD COLUMN script_id TEXT DEFAULT ''`,
+		},
+		{ // 5 -> 6
+			`ALTER TABLE scripts ADD COLUMN ssh_host_id TEXT DEFAULT ''`,
 		},
 	}
 
