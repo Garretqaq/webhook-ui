@@ -18,3 +18,4 @@ web/dist/
 
 # OS
 .DS_Store
+.scratch/
