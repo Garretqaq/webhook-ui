@@ -90,7 +90,11 @@ docker run -d \
 POST /hooks/:id
 ```
 
-支持 HMAC 签名验证:
+支持两种访问校验（可单独或同时使用）:
+
+**固定 Token**：Hook 配置固定 Token 后，请求需带 `X-Token` header 或 `?token=` 查询参数，值相等才执行。适合不能计算 HMAC 的调用方。
+
+**HMAC 签名**：
 - GitHub: `X-Hub-Signature-256` header
 - GitLab: `X-Gitlab-Token` header
 - 通用: `X-Signature` header
