@@ -2,7 +2,7 @@ package database
 
 import "fmt"
 
-const schemaVersion = 4
+const schemaVersion = 5
 
 func Migrate() error {
 	var version int
@@ -73,6 +73,9 @@ func Migrate() error {
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 			)`,
+		},
+		{ // 4 -> 5
+			`ALTER TABLE hooks ADD COLUMN script_id TEXT DEFAULT ''`,
 		},
 	}
 

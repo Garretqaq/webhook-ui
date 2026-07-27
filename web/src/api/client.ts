@@ -9,6 +9,7 @@ export interface Hook {
   id: string
   name: string
   command: string
+  script_id: string
   working_dir: string
   response_message: string
   hmac_secret?: string
@@ -24,6 +25,7 @@ export interface Hook {
 export interface HookListItem extends Hook {
   hmac_enabled: boolean
   trigger_token_enabled: boolean
+  script_name: string
 }
 
 export interface Execution {

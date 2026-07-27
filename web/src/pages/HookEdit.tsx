@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Form, Input, Select, Button, Card, message, Space } from 'antd'
+import { Form, Input, Select, Button, Card, message, Space, Radio } from 'antd'
 import { useNavigate, useParams } from 'react-router-dom'
-import { hookApi } from '../api/client'
+import { hookApi, scriptApi } from '../api/client'
+import type { Script } from '../api/client'
 
 const { TextArea } = Input
 
@@ -9,10 +10,13 @@ export default function HookEdit() {
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
   const [isNew, setIsNew] = useState(true)
+  const [scripts, setScripts] = useState<Script[]>([])
+  const execMode = Form.useWatch('exec_mode', form)
   const navigate = useNavigate()
   const { id } = useParams()
 
   useEffect(() => {
+    scriptApi.list().then(res => setScripts(res.data)).catch(() => {})
     if (id && id !== 'new') {
       setIsNew(false)
       loadHook(id)
@@ -24,6 +28,7 @@ export default function HookEdit() {
       const res = await hookApi.get(hookId)
       form.setFieldsValue({
         ...res.data,
+        exec_mode: res.data.script_id ? 'script' : 'command',
         pass_arguments: res.data.pass_arguments?.join('\n') || '',
         pass_headers: res.data.pass_headers?.join('\n') || '',
       })
@@ -35,11 +40,15 @@ export default function HookEdit() {
   const onFinish = async (values: any) => {
     setLoading(true)
     try {
+      const useScript = values.exec_mode === 'script'
       const data = {
         ...values,
+        command: useScript ? '' : values.command,
+        script_id: useScript ? values.script_id : '',
         pass_arguments: values.pass_arguments?.split('\n').filter((s: string) => s.trim()) || [],
         pass_headers: values.pass_headers?.split('\n').filter((s: string) => s.trim()) || [],
       }
+      delete data.exec_mode
 
       if (isNew) {
         await hookApi.create(data)
@@ -65,6 +74,7 @@ export default function HookEdit() {
         initialValues={{
           hmac_algorithm: 'sha256',
           pass_payload_to: '',
+          exec_mode: 'command',
         }}
       >
         {!isNew && (
@@ -81,14 +91,37 @@ export default function HookEdit() {
           <Input placeholder="例如: 部署生产环境" />
         </Form.Item>
 
-        <Form.Item
-          name="command"
-          label="执行命令"
-          rules={[{ required: true, message: '请输入命令' }]}
-          extra="例如: /opt/scripts/deploy.sh 或 /usr/bin/git pull"
-        >
-          <Input placeholder="/path/to/command" />
+        <Form.Item name="exec_mode" label="执行方式">
+          <Radio.Group>
+            <Radio.Button value="command">命令</Radio.Button>
+            <Radio.Button value="script">脚本</Radio.Button>
+          </Radio.Group>
         </Form.Item>
+
+        {execMode === 'script' ? (
+          <Form.Item
+            name="script_id"
+            label="选择脚本"
+            rules={[{ required: true, message: '请选择脚本' }]}
+            extra={scripts.length === 0 ? '暂无脚本，请先到「脚本管理」创建' : undefined}
+          >
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder="选择要执行的脚本"
+              options={scripts.map(s => ({ value: s.id, label: `${s.name} (${s.interpreter})` }))}
+            />
+          </Form.Item>
+        ) : (
+          <Form.Item
+            name="command"
+            label="执行命令"
+            rules={[{ required: true, message: '请输入命令' }]}
+            extra="例如: /opt/scripts/deploy.sh 或 /usr/bin/git pull"
+          >
+            <Input placeholder="/path/to/command" />
+          </Form.Item>
+        )}
 
         <Form.Item name="working_dir" label="工作目录">
           <Input placeholder="/path/to/workdir (可选)" />

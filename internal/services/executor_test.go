@@ -19,7 +19,7 @@ func newTestExecutor(t *testing.T) *Executor {
 
 func TestExecuteScriptSuccess(t *testing.T) {
 	e := newTestExecutor(t)
-	result := e.ExecuteScript("bash", "echo hello $1; echo $MY_VAR", []string{"world"}, map[string]string{"MY_VAR": "42"})
+	result := e.ExecuteScript("bash", "echo hello $1; echo $MY_VAR", []string{"world"}, map[string]string{"MY_VAR": "42"}, "")
 	if !result.Success {
 		t.Fatalf("expected success, got error: %s", result.Error)
 	}
@@ -33,7 +33,7 @@ func TestExecuteScriptSuccess(t *testing.T) {
 
 func TestExecuteScriptNonZeroExit(t *testing.T) {
 	e := newTestExecutor(t)
-	result := e.ExecuteScript("bash", "echo oops >&2; exit 1", nil, nil)
+	result := e.ExecuteScript("bash", "echo oops >&2; exit 1", nil, nil, "")
 	if result.Success {
 		t.Fatal("expected failure for non-zero exit")
 	}
@@ -44,7 +44,7 @@ func TestExecuteScriptNonZeroExit(t *testing.T) {
 
 func TestExecuteScriptInterpreterNotAllowed(t *testing.T) {
 	e := NewExecutor([]string{"/usr/bin/git"}, t.TempDir())
-	result := e.ExecuteScript("bash", "echo hi", nil, nil)
+	result := e.ExecuteScript("bash", "echo hi", nil, nil, "")
 	if result.Success {
 		t.Fatal("expected failure when interpreter not whitelisted")
 	}
@@ -53,9 +53,23 @@ func TestExecuteScriptInterpreterNotAllowed(t *testing.T) {
 	}
 }
 
+func TestExecuteScriptWorkingDir(t *testing.T) {
+	e := newTestExecutor(t)
+	workDir := t.TempDir()
+	result := e.ExecuteScript("bash", "pwd", nil, nil, workDir)
+	if !result.Success {
+		t.Fatalf("expected success, got: %s", result.Error)
+	}
+	// macOS /tmp symlinks to /private/tmp; compare resolved paths
+	resolved, _ := filepath.EvalSymlinks(workDir)
+	if !strings.Contains(result.Output, resolved) {
+		t.Errorf("expected script to run in %s, got: %q", resolved, result.Output)
+	}
+}
+
 func TestExecuteScriptCleansUpTempFile(t *testing.T) {
 	e := newTestExecutor(t)
-	result := e.ExecuteScript("bash", "echo done", nil, nil)
+	result := e.ExecuteScript("bash", "echo done", nil, nil, "")
 	if !result.Success {
 		t.Fatalf("expected success, got: %s", result.Error)
 	}

@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -125,6 +127,30 @@ func (h *ScriptHandler) Update(c *gin.Context) {
 
 func (h *ScriptHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
+
+	rows, err := database.DB.Query("SELECT name FROM hooks WHERE script_id = ?", id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	var hookNames []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		hookNames = append(hookNames, name)
+	}
+	rows.Close()
+	if len(hookNames) > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": fmt.Sprintf("脚本被以下 Hook 引用，无法删除: %s", strings.Join(hookNames, ", ")),
+		})
+		return
+	}
+
 	result, err := database.DB.Exec("DELETE FROM scripts WHERE id = ?", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -162,7 +188,7 @@ func (h *ScriptHandler) Test(c *gin.Context) {
 		return
 	}
 
-	result := h.executor.ExecuteScript(req.Interpreter, req.Content, req.Args, nil)
+	result := h.executor.ExecuteScript(req.Interpreter, req.Content, req.Args, nil, "")
 	c.JSON(http.StatusOK, gin.H{
 		"success": result.Success,
 		"output":  result.Output,

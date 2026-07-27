@@ -85,7 +85,8 @@ func (e *Executor) Execute(hook *models.Hook, env map[string]string, args []stri
 
 // ExecuteScript writes content to a temp file and runs it with the given
 // interpreter. The interpreter binary must pass the command whitelist.
-func (e *Executor) ExecuteScript(interpreter, content string, args []string, env map[string]string) *ExecuteResult {
+// workDir may be empty to inherit the current directory.
+func (e *Executor) ExecuteScript(interpreter, content string, args []string, env map[string]string, workDir string) *ExecuteResult {
 	if !e.isAllowed(interpreter) {
 		return &ExecuteResult{
 			Success: false,
@@ -123,6 +124,9 @@ func (e *Executor) ExecuteScript(interpreter, content string, args []string, env
 
 	cmdArgs := append([]string{tmpFile.Name()}, args...)
 	cmd := exec.Command(binPath, cmdArgs...)
+	if workDir != "" {
+		cmd.Dir = workDir
+	}
 	applyEnv(cmd, env)
 	return runWithTimeout(cmd)
 }

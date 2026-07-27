@@ -66,9 +66,12 @@ export default function HookList() {
     },
     {
       title: '命令',
-      dataIndex: 'command',
       key: 'command',
       ellipsis: true,
+      render: (_: any, record: HookListItem) =>
+        record.script_id
+          ? <Tag color="blue">脚本: {record.script_name || record.script_id}</Tag>
+          : record.command,
     },
     {
       title: 'HMAC',

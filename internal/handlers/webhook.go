@@ -29,11 +29,11 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 
 	var hook models.Hook
 	err := database.DB.QueryRow(`
-		SELECT id, name, command, working_dir, response_message,
+		SELECT id, name, command, script_id, working_dir, response_message,
 		       hmac_secret, hmac_algorithm, trigger_token, pass_arguments, pass_headers, pass_payload_to
 		FROM hooks WHERE id = ?
 	`, hookID).Scan(
-		&hook.ID, &hook.Name, &hook.Command, &hook.WorkingDir,
+		&hook.ID, &hook.Name, &hook.Command, &hook.ScriptID, &hook.WorkingDir,
 		&hook.ResponseMessage, &hook.HMACSecret, &hook.HMACAlgorithm, &hook.TriggerToken,
 		&hook.PassArguments, &hook.PassHeaders, &hook.PassPayloadTo,
 	)
@@ -79,7 +79,7 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 
 	execID := h.logExecutionStart(hookID, c.ClientIP())
 
-	result := h.executor.Execute(&hook, env, args)
+	result := h.execute(&hook, env, args)
 
 	status := "success"
 	if !result.Success {
@@ -98,6 +98,25 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 			"output": result.Output,
 		})
 	}
+}
+
+// execute runs the hook's bound script, or its free-form command.
+func (h *WebhookHandler) execute(hook *models.Hook, env map[string]string, args []string) *services.ExecuteResult {
+	if hook.ScriptID == "" {
+		return h.executor.Execute(hook, env, args)
+	}
+
+	var script models.Script
+	err := database.DB.QueryRow(`
+		SELECT interpreter, content FROM scripts WHERE id = ?
+	`, hook.ScriptID).Scan(&script.Interpreter, &script.Content)
+	if err != nil {
+		return &services.ExecuteResult{
+			Success: false,
+			Error:   fmt.Sprintf("script not found: %s", hook.ScriptID),
+		}
+	}
+	return h.executor.ExecuteScript(script.Interpreter, script.Content, args, env, hook.WorkingDir)
 }
 
 func (h *WebhookHandler) buildCommandInput(hook *models.Hook, c *gin.Context, payload []byte) (map[string]string, []string) {

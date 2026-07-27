@@ -41,6 +41,7 @@ type Hook struct {
 	ID              string      `json:"id"`
 	Name            string      `json:"name"`
 	Command         string      `json:"command"`
+	ScriptID        string      `json:"script_id"`
 	WorkingDir      string      `json:"working_dir"`
 	ResponseMessage string      `json:"response_message"`
 	HMACSecret      string      `json:"hmac_secret,omitempty"`
@@ -60,8 +61,11 @@ func (h *Hook) Validate() error {
 	if h.Name == "" {
 		return errors.New("name is required")
 	}
-	if h.Command == "" {
-		return errors.New("command is required")
+	if h.Command != "" && h.ScriptID != "" {
+		return errors.New("command and script are mutually exclusive")
+	}
+	if h.Command == "" && h.ScriptID == "" {
+		return errors.New("command or script is required")
 	}
 	return nil
 }
