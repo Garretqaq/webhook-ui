@@ -40,7 +40,7 @@ func (h *HookHandler) List(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var items []HookListItem
+	items := []HookListItem{}
 	for rows.Next() {
 		var item HookListItem
 		err := rows.Scan(

@@ -42,7 +42,7 @@ func (h *ExecutionHandler) List(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var executions []models.Execution
+	executions := []models.Execution{}
 	for rows.Next() {
 		var exec models.Execution
 		var finishedAt sql.NullTime
