@@ -17,6 +17,9 @@ import (
 	"github.com/songguangzhi/webhook-ui/internal/services"
 )
 
+// version is injected at build time via -ldflags "-X main.version=x.y.z"
+var version = "dev"
+
 func main() {
 	cfg := config.Load()
 
@@ -113,6 +116,6 @@ func main() {
 	}
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	log.Printf("Starting server on %s", addr)
+	log.Printf("Starting webhook-ui %s on %s", version, addr)
 	log.Fatal(r.Run(addr))
 }
