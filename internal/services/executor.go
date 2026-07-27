@@ -14,11 +14,13 @@ import (
 
 type Executor struct {
 	allowedCommands []string
+	tmpDir          string
 }
 
-func NewExecutor(allowedCommands []string) *Executor {
+func NewExecutor(allowedCommands []string, dataDir string) *Executor {
 	return &Executor{
 		allowedCommands: allowedCommands,
+		tmpDir:          filepath.Join(dataDir, "tmp"),
 	}
 }
 
@@ -77,11 +79,62 @@ func (e *Executor) Execute(hook *models.Hook, env map[string]string, args []stri
 		cmd.Dir = hook.WorkingDir
 	}
 
+	applyEnv(cmd, env)
+	return runWithTimeout(cmd)
+}
+
+// ExecuteScript writes content to a temp file and runs it with the given
+// interpreter. The interpreter binary must pass the command whitelist.
+func (e *Executor) ExecuteScript(interpreter, content string, args []string, env map[string]string) *ExecuteResult {
+	if !e.isAllowed(interpreter) {
+		return &ExecuteResult{
+			Success: false,
+			Error:   fmt.Sprintf("interpreter not allowed: %s", interpreter),
+		}
+	}
+
+	binPath, err := exec.LookPath(interpreter)
+	if err != nil {
+		return &ExecuteResult{
+			Success: false,
+			Error:   fmt.Sprintf("interpreter not found: %s", interpreter),
+		}
+	}
+
+	if err := os.MkdirAll(e.tmpDir, 0700); err != nil {
+		return &ExecuteResult{Success: false, Error: err.Error()}
+	}
+	tmpFile, err := os.CreateTemp(e.tmpDir, "script-*")
+	if err != nil {
+		return &ExecuteResult{Success: false, Error: err.Error()}
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(content); err != nil {
+		tmpFile.Close()
+		return &ExecuteResult{Success: false, Error: err.Error()}
+	}
+	if err := tmpFile.Close(); err != nil {
+		return &ExecuteResult{Success: false, Error: err.Error()}
+	}
+	if err := os.Chmod(tmpFile.Name(), 0700); err != nil {
+		return &ExecuteResult{Success: false, Error: err.Error()}
+	}
+
+	cmdArgs := append([]string{tmpFile.Name()}, args...)
+	cmd := exec.Command(binPath, cmdArgs...)
+	applyEnv(cmd, env)
+	return runWithTimeout(cmd)
+}
+
+func applyEnv(cmd *exec.Cmd, env map[string]string) {
 	cmd.Env = os.Environ()
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
+}
 
+func runWithTimeout(cmd *exec.Cmd) *ExecuteResult {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

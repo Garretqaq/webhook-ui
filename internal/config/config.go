@@ -20,7 +20,7 @@ func Load() *Config {
 		Port:            getEnv("PORT", "9000"),
 		DataDir:         getEnv("DATA_DIR", "./data"),
 		AdminPassword:   getEnv("ADMIN_PASSWORD", ""),
-		AllowedCommands: getEnvSlice("ALLOWED_COMMANDS", []string{"/usr/bin/git", "/usr/bin/curl"}),
+		AllowedCommands: getEnvSlice("ALLOWED_COMMANDS", []string{"/usr/bin/git", "/usr/bin/curl", "/bin/bash", "/bin/sh", "/usr/bin/python3"}),
 	}
 
 	cfg.SessionSecret = os.Getenv("SESSION_SECRET")

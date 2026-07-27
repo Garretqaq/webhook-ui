@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from
 import { Layout, Menu, Spin } from 'antd'
 import {
   ApiOutlined,
+  CodeOutlined,
   FileTextOutlined,
   LogoutOutlined,
   QuestionCircleOutlined,
@@ -11,6 +12,8 @@ import { authApi } from './api/client'
 import Login from './pages/Login'
 import HookList from './pages/HookList'
 import HookEdit from './pages/HookEdit'
+import ScriptList from './pages/ScriptList'
+import ScriptEdit from './pages/ScriptEdit'
 import ExecutionLogs from './pages/ExecutionLogs'
 import UsageGuide from './pages/UsageGuide'
 
@@ -30,6 +33,11 @@ function AppLayout({ children, onLogout }: { children: React.ReactNode; onLogout
       key: '/hooks',
       icon: <ApiOutlined />,
       label: 'Webhook 管理',
+    },
+    {
+      key: '/scripts',
+      icon: <CodeOutlined />,
+      label: '脚本管理',
     },
     {
       key: '/executions',
@@ -134,6 +142,30 @@ function App() {
             authenticated ? (
               <AppLayout onLogout={handleLogout}>
                 <HookEdit />
+              </AppLayout>
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        />
+        <Route
+          path="/scripts"
+          element={
+            authenticated ? (
+              <AppLayout onLogout={handleLogout}>
+                <ScriptList />
+              </AppLayout>
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        />
+        <Route
+          path="/scripts/:id"
+          element={
+            authenticated ? (
+              <AppLayout onLogout={handleLogout}>
+                <ScriptEdit />
               </AppLayout>
             ) : (
               <Navigate to="/login" />

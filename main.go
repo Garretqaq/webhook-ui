@@ -72,9 +72,10 @@ func main() {
 
 	authHandler := handlers.NewAuthHandler(cfg.AdminPassword)
 	hookHandler := handlers.NewHookHandler()
-	executor := services.NewExecutor(cfg.AllowedCommands)
+	executor := services.NewExecutor(cfg.AllowedCommands, cfg.DataDir)
 	webhookHandler := handlers.NewWebhookHandler(executor)
 	executionHandler := handlers.NewExecutionHandler()
+	scriptHandler := handlers.NewScriptHandler(executor)
 
 	r.POST("/api/auth/login", authHandler.Login)
 	r.GET("/api/auth/check", authHandler.Check)
@@ -94,6 +95,13 @@ func main() {
 
 		auth.GET("/executions", executionHandler.List)
 		auth.GET("/executions/:id", executionHandler.Get)
+
+		auth.GET("/scripts", scriptHandler.List)
+		auth.POST("/scripts", scriptHandler.Create)
+		auth.GET("/scripts/:id", scriptHandler.Get)
+		auth.PUT("/scripts/:id", scriptHandler.Update)
+		auth.DELETE("/scripts/:id", scriptHandler.Delete)
+		auth.POST("/scripts/test", scriptHandler.Test)
 	}
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
