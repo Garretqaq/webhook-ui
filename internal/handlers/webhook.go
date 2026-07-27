@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -29,11 +30,11 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 	var hook models.Hook
 	err := database.DB.QueryRow(`
 		SELECT id, name, command, working_dir, response_message,
-		       hmac_secret, hmac_algorithm, pass_arguments, pass_headers, pass_payload_to
+		       hmac_secret, hmac_algorithm, trigger_token, pass_arguments, pass_headers, pass_payload_to
 		FROM hooks WHERE id = ?
 	`, hookID).Scan(
 		&hook.ID, &hook.Name, &hook.Command, &hook.WorkingDir,
-		&hook.ResponseMessage, &hook.HMACSecret, &hook.HMACAlgorithm,
+		&hook.ResponseMessage, &hook.HMACSecret, &hook.HMACAlgorithm, &hook.TriggerToken,
 		&hook.PassArguments, &hook.PassHeaders, &hook.PassPayloadTo,
 	)
 
@@ -50,6 +51,18 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read body"})
 		return
+	}
+
+	if hook.TriggerToken != "" {
+		token := c.GetHeader("X-Token")
+		if token == "" {
+			token = c.Query("token")
+		}
+		if subtle.ConstantTimeCompare([]byte(token), []byte(hook.TriggerToken)) != 1 {
+			h.logExecution(hookID, c.ClientIP(), "failed", "", "invalid trigger token")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
+		}
 	}
 
 	if hook.HMACSecret != "" {

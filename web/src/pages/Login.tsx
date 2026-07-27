@@ -1,18 +1,16 @@
 import { useState } from 'react'
 import { Form, Input, Button, Card, message } from 'antd'
-import { useNavigate } from 'react-router-dom'
 import { authApi } from '../api/client'
 
-export default function Login() {
+export default function Login({ onLogin }: { onLogin: () => void }) {
   const [loading, setLoading] = useState(false)
-  const navigate = useNavigate()
 
   const onFinish = async (values: { password: string }) => {
     setLoading(true)
     try {
       await authApi.login(values.password)
       message.success('登录成功')
-      navigate('/hooks')
+      onLogin()
     } catch (error: any) {
       message.error(error.response?.data?.error || '登录失败')
     } finally {

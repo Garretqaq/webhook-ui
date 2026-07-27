@@ -19,14 +19,16 @@ func NewHookHandler() *HookHandler {
 
 type HookListItem struct {
 	models.Hook
-	HMACEnabled bool `json:"hmac_enabled"`
+	HMACEnabled       bool `json:"hmac_enabled"`
+	TriggerTokenEnabled bool `json:"trigger_token_enabled"`
 }
 
 func (h *HookHandler) List(c *gin.Context) {
 	rows, err := database.DB.Query(`
 		SELECT id, name, command, working_dir, response_message,
 		       hmac_algorithm, pass_arguments, pass_headers, pass_payload_to,
-		       created_at, updated_at, hmac_secret != '' as hmac_enabled
+		       created_at, updated_at, hmac_secret != '' as hmac_enabled,
+		       trigger_token != '' as trigger_token_enabled
 		FROM hooks ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -43,6 +45,7 @@ func (h *HookHandler) List(c *gin.Context) {
 			&item.ResponseMessage, &item.HMACAlgorithm,
 			&item.PassArguments, &item.PassHeaders, &item.PassPayloadTo,
 			&item.CreatedAt, &item.UpdatedAt, &item.HMACEnabled,
+			&item.TriggerTokenEnabled,
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -59,12 +62,12 @@ func (h *HookHandler) Get(c *gin.Context) {
 	var hook models.Hook
 	err := database.DB.QueryRow(`
 		SELECT id, name, command, working_dir, response_message,
-		       hmac_secret, hmac_algorithm, pass_arguments, pass_headers, pass_payload_to,
+		       hmac_secret, hmac_algorithm, trigger_token, pass_arguments, pass_headers, pass_payload_to,
 		       created_at, updated_at
 		FROM hooks WHERE id = ?
 	`, id).Scan(
 		&hook.ID, &hook.Name, &hook.Command, &hook.WorkingDir,
-		&hook.ResponseMessage, &hook.HMACSecret, &hook.HMACAlgorithm,
+		&hook.ResponseMessage, &hook.HMACSecret, &hook.HMACAlgorithm, &hook.TriggerToken,
 		&hook.PassArguments, &hook.PassHeaders, &hook.PassPayloadTo,
 		&hook.CreatedAt, &hook.UpdatedAt,
 	)
@@ -102,10 +105,11 @@ func (h *HookHandler) Create(c *gin.Context) {
 
 	_, err := database.DB.Exec(`
 		INSERT INTO hooks (id, name, command, working_dir, response_message,
-		                  hmac_secret, hmac_algorithm, pass_arguments, pass_headers, pass_payload_to)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                  hmac_secret, hmac_algorithm, trigger_token, pass_arguments, pass_headers, pass_payload_to)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, hook.ID, hook.Name, hook.Command, hook.WorkingDir, hook.ResponseMessage,
-		hook.HMACSecret, hook.HMACAlgorithm, hook.PassArguments, hook.PassHeaders, hook.PassPayloadTo)
+		hook.HMACSecret, hook.HMACAlgorithm, hook.TriggerToken,
+		hook.PassArguments, hook.PassHeaders, hook.PassPayloadTo)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -131,11 +135,11 @@ func (h *HookHandler) Update(c *gin.Context) {
 
 	result, err := database.DB.Exec(`
 		UPDATE hooks SET name=?, command=?, working_dir=?, response_message=?,
-		                hmac_secret=?, hmac_algorithm=?, pass_arguments=?, pass_headers=?,
+		                hmac_secret=?, hmac_algorithm=?, trigger_token=?, pass_arguments=?, pass_headers=?,
 		                pass_payload_to=?, updated_at=?
 		WHERE id=?
 	`, hook.Name, hook.Command, hook.WorkingDir, hook.ResponseMessage,
-		hook.HMACSecret, hook.HMACAlgorithm, hook.PassArguments, hook.PassHeaders,
+		hook.HMACSecret, hook.HMACAlgorithm, hook.TriggerToken, hook.PassArguments, hook.PassHeaders,
 		hook.PassPayloadTo, time.Now(), id)
 
 	if err != nil {

@@ -36,8 +36,18 @@ export default function HookList() {
     }
   }
 
-  const copyWebhookUrl = (id: string) => {
-    const url = `${window.location.origin}/hooks/${id}`
+  const copyWebhookUrl = async (record: HookListItem) => {
+    let url = `${window.location.origin}/hooks/${record.id}`
+    if (record.trigger_token_enabled) {
+      try {
+        const res = await hookApi.get(record.id)
+        if (res.data.trigger_token) {
+          url += `?token=${encodeURIComponent(res.data.trigger_token)}`
+        }
+      } catch {
+        // fall back to bare URL
+      }
+    }
     navigator.clipboard.writeText(url)
     message.success('Webhook URL 已复制')
   }
@@ -81,7 +91,7 @@ export default function HookList() {
           <Button
             type="text"
             icon={<CopyOutlined />}
-            onClick={() => copyWebhookUrl(record.id)}
+            onClick={() => copyWebhookUrl(record)}
             title="复制 Webhook URL"
           />
           <Button

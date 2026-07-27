@@ -5,22 +5,24 @@ import {
   ApiOutlined,
   FileTextOutlined,
   LogoutOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons'
 import { authApi } from './api/client'
 import Login from './pages/Login'
 import HookList from './pages/HookList'
 import HookEdit from './pages/HookEdit'
 import ExecutionLogs from './pages/ExecutionLogs'
+import UsageGuide from './pages/UsageGuide'
 
 const { Header, Content, Sider } = Layout
 
-function AppLayout({ children }: { children: React.ReactNode }) {
+function AppLayout({ children, onLogout }: { children: React.ReactNode; onLogout: () => void }) {
   const navigate = useNavigate()
   const location = useLocation()
 
   const handleLogout = async () => {
     await authApi.logout()
-    navigate('/login')
+    onLogout()
   }
 
   const menuItems = [
@@ -33,6 +35,11 @@ function AppLayout({ children }: { children: React.ReactNode }) {
       key: '/executions',
       icon: <FileTextOutlined />,
       label: '执行日志',
+    },
+    {
+      key: '/guide',
+      icon: <QuestionCircleOutlined />,
+      label: '使用说明',
     },
   ]
 
@@ -86,6 +93,9 @@ function App() {
     }
   }
 
+  const handleLogin = () => setAuthenticated(true)
+  const handleLogout = () => setAuthenticated(false)
+
   if (authenticated === null) {
     return (
       <div style={{
@@ -104,13 +114,13 @@ function App() {
       <Routes>
         <Route
           path="/login"
-          element={authenticated ? <Navigate to="/hooks" /> : <Login />}
+          element={authenticated ? <Navigate to="/hooks" /> : <Login onLogin={handleLogin} />}
         />
         <Route
           path="/hooks"
           element={
             authenticated ? (
-              <AppLayout>
+              <AppLayout onLogout={handleLogout}>
                 <HookList />
               </AppLayout>
             ) : (
@@ -122,7 +132,7 @@ function App() {
           path="/hooks/:id"
           element={
             authenticated ? (
-              <AppLayout>
+              <AppLayout onLogout={handleLogout}>
                 <HookEdit />
               </AppLayout>
             ) : (
@@ -134,8 +144,20 @@ function App() {
           path="/executions"
           element={
             authenticated ? (
-              <AppLayout>
+              <AppLayout onLogout={handleLogout}>
                 <ExecutionLogs />
+              </AppLayout>
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        />
+        <Route
+          path="/guide"
+          element={
+            authenticated ? (
+              <AppLayout onLogout={handleLogout}>
+                <UsageGuide />
               </AppLayout>
             ) : (
               <Navigate to="/login" />

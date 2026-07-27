@@ -13,6 +13,7 @@ export interface Hook {
   response_message: string
   hmac_secret?: string
   hmac_algorithm: string
+  trigger_token?: string
   pass_arguments: string[]
   pass_headers: string[]
   pass_payload_to: string
@@ -22,6 +23,7 @@ export interface Hook {
 
 export interface HookListItem extends Hook {
   hmac_enabled: boolean
+  trigger_token_enabled: boolean
 }
 
 export interface Execution {

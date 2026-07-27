@@ -22,7 +22,11 @@ export default function HookEdit() {
   const loadHook = async (hookId: string) => {
     try {
       const res = await hookApi.get(hookId)
-      form.setFieldsValue(res.data)
+      form.setFieldsValue({
+        ...res.data,
+        pass_arguments: res.data.pass_arguments?.join('\n') || '',
+        pass_headers: res.data.pass_headers?.join('\n') || '',
+      })
     } catch (error) {
       message.error('加载失败')
     }
@@ -108,6 +112,14 @@ export default function HookEdit() {
             <Select.Option value="sha256">SHA256</Select.Option>
             <Select.Option value="sha512">SHA512</Select.Option>
           </Select>
+        </Form.Item>
+
+        <Form.Item
+          name="trigger_token"
+          label="固定 Token"
+          extra="留空则不验证。请求需带 X-Token header 或 ?token= 参数，值相等才执行（适合不能算 HMAC 的调用方）"
+        >
+          <Input.Password placeholder="固定访问令牌" />
         </Form.Item>
 
         <Form.Item

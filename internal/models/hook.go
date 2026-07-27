@@ -45,6 +45,7 @@ type Hook struct {
 	ResponseMessage string      `json:"response_message"`
 	HMACSecret      string      `json:"hmac_secret,omitempty"`
 	HMACAlgorithm   string      `json:"hmac_algorithm"`
+	TriggerToken    string      `json:"trigger_token,omitempty"`
 	PassArguments   StringArray `json:"pass_arguments"`
 	PassHeaders     StringArray `json:"pass_headers"`
 	PassPayloadTo   string      `json:"pass_payload_to"`
