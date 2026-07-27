@@ -4,6 +4,7 @@ import { Layout, Menu, Spin } from 'antd'
 import {
   ApiOutlined,
   CodeOutlined,
+  CloudServerOutlined,
   FileTextOutlined,
   LogoutOutlined,
   QuestionCircleOutlined,
@@ -14,6 +15,8 @@ import HookList from './pages/HookList'
 import HookEdit from './pages/HookEdit'
 import ScriptList from './pages/ScriptList'
 import ScriptEdit from './pages/ScriptEdit'
+import SSHHostList from './pages/SSHHostList'
+import SSHHostEdit from './pages/SSHHostEdit'
 import ExecutionLogs from './pages/ExecutionLogs'
 import UsageGuide from './pages/UsageGuide'
 
@@ -38,6 +41,11 @@ function AppLayout({ children, onLogout }: { children: React.ReactNode; onLogout
       key: '/scripts',
       icon: <CodeOutlined />,
       label: '脚本管理',
+    },
+    {
+      key: '/ssh-hosts',
+      icon: <CloudServerOutlined />,
+      label: 'SSH 主机',
     },
     {
       key: '/executions',
@@ -166,6 +174,30 @@ function App() {
             authenticated ? (
               <AppLayout onLogout={handleLogout}>
                 <ScriptEdit />
+              </AppLayout>
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        />
+        <Route
+          path="/ssh-hosts"
+          element={
+            authenticated ? (
+              <AppLayout onLogout={handleLogout}>
+                <SSHHostList />
+              </AppLayout>
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        />
+        <Route
+          path="/ssh-hosts/:id"
+          element={
+            authenticated ? (
+              <AppLayout onLogout={handleLogout}>
+                <SSHHostEdit />
               </AppLayout>
             ) : (
               <Navigate to="/login" />

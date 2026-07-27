@@ -76,6 +76,7 @@ func main() {
 	webhookHandler := handlers.NewWebhookHandler(executor)
 	executionHandler := handlers.NewExecutionHandler()
 	scriptHandler := handlers.NewScriptHandler(executor)
+	sshHostHandler := handlers.NewSSHHostHandler()
 
 	r.POST("/api/auth/login", authHandler.Login)
 	r.GET("/api/auth/check", authHandler.Check)
@@ -102,6 +103,13 @@ func main() {
 		auth.PUT("/scripts/:id", scriptHandler.Update)
 		auth.DELETE("/scripts/:id", scriptHandler.Delete)
 		auth.POST("/scripts/test", scriptHandler.Test)
+
+		auth.GET("/ssh-hosts", sshHostHandler.List)
+		auth.POST("/ssh-hosts", sshHostHandler.Create)
+		auth.GET("/ssh-hosts/:id", sshHostHandler.Get)
+		auth.PUT("/ssh-hosts/:id", sshHostHandler.Update)
+		auth.DELETE("/ssh-hosts/:id", sshHostHandler.Delete)
+		auth.POST("/ssh-hosts/test", sshHostHandler.Test)
 	}
 
 	addr := fmt.Sprintf(":%s", cfg.Port)

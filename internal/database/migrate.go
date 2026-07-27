@@ -2,7 +2,7 @@ package database
 
 import "fmt"
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 func Migrate() error {
 	var version int
@@ -56,6 +56,20 @@ func Migrate() error {
 				interpreter TEXT NOT NULL DEFAULT 'bash',
 				content TEXT NOT NULL,
 				description TEXT DEFAULT '',
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			)`,
+		},
+		{ // 3 -> 4
+			`CREATE TABLE IF NOT EXISTS ssh_hosts (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				host TEXT NOT NULL,
+				port INTEGER NOT NULL DEFAULT 22,
+				user TEXT NOT NULL,
+				auth_type TEXT NOT NULL DEFAULT 'key',
+				credential TEXT NOT NULL,
+				host_key TEXT DEFAULT '',
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 			)`,

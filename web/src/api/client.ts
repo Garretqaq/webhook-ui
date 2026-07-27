@@ -53,6 +53,25 @@ export interface ScriptTestResult {
   error: string
 }
 
+export interface SSHHost {
+  id: string
+  name: string
+  host: string
+  port: number
+  user: string
+  auth_type: 'key' | 'password'
+  credential?: string
+  host_key?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SSHHostTestResult {
+  success: boolean
+  error?: string
+  learned_host_key?: string
+}
+
 export const authApi = {
   login: (password: string) => client.post('/auth/login', { password }),
   logout: () => client.post('/auth/logout'),
@@ -81,6 +100,15 @@ export const scriptApi = {
   delete: (id: string) => client.delete(`/scripts/${id}`),
   test: (data: { interpreter: string; content: string; args: string[] }) =>
     client.post<ScriptTestResult>('/scripts/test', data),
+}
+
+export const sshHostApi = {
+  list: () => client.get<SSHHost[]>('/ssh-hosts'),
+  get: (id: string) => client.get<SSHHost>(`/ssh-hosts/${id}`),
+  create: (host: Partial<SSHHost>) => client.post<SSHHost>('/ssh-hosts', host),
+  update: (id: string, host: Partial<SSHHost>) => client.put<SSHHost>(`/ssh-hosts/${id}`, host),
+  delete: (id: string) => client.delete(`/ssh-hosts/${id}`),
+  test: (host: Partial<SSHHost>) => client.post<SSHHostTestResult>('/ssh-hosts/test', host),
 }
 
 export default client
