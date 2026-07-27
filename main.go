@@ -59,8 +59,8 @@ func main() {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		// Webhook trigger: POST /hooks/:id handled by route above, other methods 404
-		if strings.HasPrefix(path, "/hooks/") && c.Request.Method != http.MethodPost {
+		// Webhook trigger: GET/POST /hooks/:id handled by routes above, other methods 404
+		if strings.HasPrefix(path, "/hooks/") && c.Request.Method != http.MethodPost && c.Request.Method != http.MethodGet {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
@@ -85,6 +85,7 @@ func main() {
 	r.GET("/api/auth/check", authHandler.Check)
 
 	r.POST("/hooks/:id", webhookHandler.Trigger)
+	r.GET("/hooks/:id", webhookHandler.Trigger)
 
 	auth := r.Group("/api")
 	auth.Use(middleware.AuthRequired())
