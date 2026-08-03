@@ -22,17 +22,10 @@ func NewScriptHandler(executor *services.Executor) *ScriptHandler {
 	return &ScriptHandler{executor: executor}
 }
 
-type ScriptListItem struct {
-	models.Script
-	SSHHostName string `json:"ssh_host_name"`
-}
-
 func (h *ScriptHandler) List(c *gin.Context) {
 	rows, err := database.DB.Query(`
-		SELECT s.id, s.name, s.interpreter, s.description, s.ssh_host_id,
-		       COALESCE(sh.name, '') as ssh_host_name, s.created_at, s.updated_at
-		FROM scripts s LEFT JOIN ssh_hosts sh ON sh.id = s.ssh_host_id
-		ORDER BY s.created_at DESC
+		SELECT id, name, interpreter, description, created_at, updated_at
+		FROM scripts ORDER BY created_at DESC
 	`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -40,11 +33,11 @@ func (h *ScriptHandler) List(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	items := []ScriptListItem{}
+	items := []models.Script{}
 	for rows.Next() {
-		var item ScriptListItem
+		var item models.Script
 		if err := rows.Scan(&item.ID, &item.Name, &item.Interpreter, &item.Description,
-			&item.SSHHostID, &item.SSHHostName, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			&item.CreatedAt, &item.UpdatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -58,9 +51,9 @@ func (h *ScriptHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 	var s models.Script
 	err := database.DB.QueryRow(`
-		SELECT id, name, interpreter, content, description, ssh_host_id, created_at, updated_at
+		SELECT id, name, interpreter, content, description, created_at, updated_at
 		FROM scripts WHERE id = ?
-	`, id).Scan(&s.ID, &s.Name, &s.Interpreter, &s.Content, &s.Description, &s.SSHHostID, &s.CreatedAt, &s.UpdatedAt)
+	`, id).Scan(&s.ID, &s.Name, &s.Interpreter, &s.Content, &s.Description, &s.CreatedAt, &s.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "script not found"})
@@ -90,9 +83,9 @@ func (h *ScriptHandler) Create(c *gin.Context) {
 	}
 
 	_, err := database.DB.Exec(`
-		INSERT INTO scripts (id, name, interpreter, content, description, ssh_host_id)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, s.ID, s.Name, s.Interpreter, s.Content, s.Description, s.SSHHostID)
+		INSERT INTO scripts (id, name, interpreter, content, description)
+		VALUES (?, ?, ?, ?, ?)
+	`, s.ID, s.Name, s.Interpreter, s.Content, s.Description)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -116,9 +109,9 @@ func (h *ScriptHandler) Update(c *gin.Context) {
 	}
 
 	result, err := database.DB.Exec(`
-		UPDATE scripts SET name=?, interpreter=?, content=?, description=?, ssh_host_id=?, updated_at=?
+		UPDATE scripts SET name=?, interpreter=?, content=?, description=?, updated_at=?
 		WHERE id=?
-	`, s.Name, s.Interpreter, s.Content, s.Description, s.SSHHostID, time.Now(), id)
+	`, s.Name, s.Interpreter, s.Content, s.Description, time.Now(), id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

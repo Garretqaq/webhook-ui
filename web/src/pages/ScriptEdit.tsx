@@ -14,7 +14,7 @@ export default function ScriptEdit() {
   const [testResult, setTestResult] = useState<ScriptTestResult | null>(null)
   const [isNew, setIsNew] = useState(true)
   const [sshHosts, setSSHHosts] = useState<SSHHost[]>([])
-  const execLocation = Form.useWatch('exec_location', form)
+  const testLocation = Form.useWatch('test_exec_location', form)
   const navigate = useNavigate()
   const { id } = useParams()
 
@@ -29,10 +29,7 @@ export default function ScriptEdit() {
   const loadScript = async (scriptId: string) => {
     try {
       const res = await scriptApi.get(scriptId)
-      form.setFieldsValue({
-        ...res.data,
-        exec_location: res.data.ssh_host_id ? 'ssh' : 'local',
-      })
+      form.setFieldsValue(res.data)
     } catch (error) {
       message.error('加载失败')
     }
@@ -42,10 +39,11 @@ export default function ScriptEdit() {
     setLoading(true)
     try {
       const data = {
-        ...values,
-        ssh_host_id: values.exec_location === 'ssh' ? values.ssh_host_id : '',
+        name: values.name,
+        interpreter: values.interpreter,
+        description: values.description,
+        content: values.content,
       }
-      delete data.exec_location
 
       if (isNew) {
         await scriptApi.create(data)
@@ -72,7 +70,7 @@ export default function ScriptEdit() {
         interpreter: values.interpreter,
         content: values.content || '',
         args,
-        ssh_host_id: values.exec_location === 'ssh' ? values.ssh_host_id : undefined,
+        ssh_host_id: values.test_exec_location === 'ssh' ? values.test_ssh_host_id : undefined,
       })
       setTestResult(res.data)
     } catch (error: any) {
@@ -88,7 +86,7 @@ export default function ScriptEdit() {
         form={form}
         layout="vertical"
         onFinish={onFinish}
-        initialValues={{ interpreter: 'bash', exec_location: 'local' }}
+        initialValues={{ interpreter: 'bash', test_exec_location: 'local' }}
       >
         <Form.Item
           name="name"
@@ -110,29 +108,6 @@ export default function ScriptEdit() {
             <Select.Option value="python3">python3</Select.Option>
           </Select>
         </Form.Item>
-
-        <Form.Item name="exec_location" label="执行位置">
-          <Radio.Group>
-            <Radio.Button value="local">本地</Radio.Button>
-            <Radio.Button value="ssh">SSH 主机</Radio.Button>
-          </Radio.Group>
-        </Form.Item>
-
-        {execLocation === 'ssh' && (
-          <Form.Item
-            name="ssh_host_id"
-            label="SSH 主机"
-            rules={[{ required: true, message: '请选择 SSH 主机' }]}
-            extra={sshHosts.length === 0 ? '暂无主机，请先到「SSH 主机」创建' : '脚本内容通过 stdin 在远端执行，不写入远端磁盘'}
-          >
-            <Select
-              showSearch
-              optionFilterProp="label"
-              placeholder="选择执行脚本的主机"
-              options={sshHosts.map(h => ({ value: h.id, label: `${h.name} (${h.user}@${h.host}:${h.port})` }))}
-            />
-          </Form.Item>
-        )}
 
         <Form.Item name="description" label="描述">
           <Input placeholder="脚本用途说明 (可选)" />
@@ -158,6 +133,33 @@ export default function ScriptEdit() {
         >
           <TextArea rows={3} placeholder="arg1&#10;arg2" />
         </Form.Item>
+
+        <Form.Item
+          name="test_exec_location"
+          label="试运行位置"
+          extra="仅用于本次试运行，不会保存到脚本。正式执行位置在 Hook 中设置"
+        >
+          <Radio.Group>
+            <Radio.Button value="local">本地</Radio.Button>
+            <Radio.Button value="ssh">SSH 主机</Radio.Button>
+          </Radio.Group>
+        </Form.Item>
+
+        {testLocation === 'ssh' && (
+          <Form.Item
+            name="test_ssh_host_id"
+            label="试运行主机"
+            rules={[{ required: true, message: '请选择 SSH 主机' }]}
+            extra={sshHosts.length === 0 ? '暂无主机，请先到「SSH 主机」创建' : '脚本内容通过 stdin 在远端执行，不写入远端磁盘'}
+          >
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder="选择试运行的主机"
+              options={sshHosts.map(h => ({ value: h.id, label: `${h.name} (${h.user}@${h.host}:${h.port})` }))}
+            />
+          </Form.Item>
+        )}
 
         <Form.Item>
           <Space>

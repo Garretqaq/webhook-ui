@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"regexp"
 	"sort"
@@ -116,12 +117,27 @@ func RunCommand(client *ssh.Client, command string) (string, error) {
 // ExecuteScriptSSH runs script content on the remote host by piping it to
 // the interpreter's stdin (bash -s / sh -s / python3 -). Nothing is written
 // to the remote filesystem. Execution is bounded by the same 5 minute
-// timeout as local execution.
-func ExecuteScriptSSH(client *ssh.Client, interpreter, content string, args []string, env map[string]string) *ExecuteResult {
+// timeout as local execution. workDir may be empty to run in the login
+// directory; otherwise the remote shell cds into it first and the whole
+// execution fails if the directory does not exist.
+func ExecuteScriptSSH(client *ssh.Client, interpreter, content string, args []string, env map[string]string, workDir string) *ExecuteResult {
 	if !models.IsValidInterpreter(interpreter) {
 		return &ExecuteResult{Success: false, Error: fmt.Sprintf("invalid interpreter: %s", interpreter)}
 	}
+	return runSSHSession(client, sshScriptCommand(interpreter, args, env, workDir), strings.NewReader(content))
+}
 
+// ExecuteCommandSSH runs a free-form command on the remote host. Unlike
+// local execution there is no ALLOWED_COMMANDS whitelist — the whitelist
+// describes binaries on the webhook server, not on the remote machine.
+func ExecuteCommandSSH(client *ssh.Client, command string, args []string, env map[string]string, workDir string) *ExecuteResult {
+	if strings.TrimSpace(command) == "" {
+		return &ExecuteResult{Success: false, Error: "command is empty"}
+	}
+	return runSSHSession(client, sshCommandLine(command, args, env, workDir), nil)
+}
+
+func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader) *ExecuteResult {
 	session, err := client.NewSession()
 	if err != nil {
 		return &ExecuteResult{Success: false, Error: err.Error()}
@@ -130,11 +146,11 @@ func ExecuteScriptSSH(client *ssh.Client, interpreter, content string, args []st
 	var stdout, stderr bytes.Buffer
 	session.Stdout = &stdout
 	session.Stderr = &stderr
-	session.Stdin = strings.NewReader(content)
+	session.Stdin = stdin
 
 	done := make(chan error, 1)
 	go func() {
-		done <- session.Run(sshScriptCommand(interpreter, args, env))
+		done <- session.Run(remoteCmd)
 	}()
 
 	select {
@@ -163,27 +179,11 @@ func ExecuteScriptSSH(client *ssh.Client, interpreter, content string, args []st
 }
 
 // sshScriptCommand builds the remote command: env assignments prefix the
-// interpreter call, args follow after the stdin-script flag. Env keys that
-// are not valid shell identifiers are skipped — query-derived keys come
-// from the external caller and must never reach the shell raw.
-var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-func sshScriptCommand(interpreter string, args []string, env map[string]string) string {
+// interpreter call, args follow after the stdin-script flag.
+func sshScriptCommand(interpreter string, args []string, env map[string]string, workDir string) string {
 	var b strings.Builder
-	// sorted for deterministic output
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		if envKeyPattern.MatchString(k) {
-			keys = append(keys, k)
-		}
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		b.WriteString(k)
-		b.WriteByte('=')
-		b.WriteString(shellEscape(env[k]))
-		b.WriteByte(' ')
-	}
+	b.WriteString(cdPrefix(workDir))
+	b.WriteString(envPrefix(env))
 
 	b.WriteString(interpreter)
 	if interpreter == "python3" {
@@ -194,6 +194,52 @@ func sshScriptCommand(interpreter string, args []string, env map[string]string) 
 	for _, a := range args {
 		b.WriteByte(' ')
 		b.WriteString(shellEscape(a))
+	}
+	return b.String()
+}
+
+// sshCommandLine builds the remote command for a free-form hook command.
+// The command itself is passed through verbatim (it is operator-authored
+// shell); only the args and env values are escaped.
+func sshCommandLine(command string, args []string, env map[string]string, workDir string) string {
+	var b strings.Builder
+	b.WriteString(cdPrefix(workDir))
+	b.WriteString(envPrefix(env))
+	b.WriteString(command)
+	for _, a := range args {
+		b.WriteByte(' ')
+		b.WriteString(shellEscape(a))
+	}
+	return b.String()
+}
+
+func cdPrefix(workDir string) string {
+	if workDir == "" {
+		return ""
+	}
+	return "cd " + shellEscape(workDir) + " && "
+}
+
+// envPrefix renders env assignments, sorted for deterministic output. Keys
+// that are not valid shell identifiers are skipped — query-derived keys come
+// from the external caller and must never reach the shell raw.
+var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func envPrefix(env map[string]string) string {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		if envKeyPattern.MatchString(k) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(shellEscape(env[k]))
+		b.WriteByte(' ')
 	}
 	return b.String()
 }

@@ -36,13 +36,24 @@ export default function UsageGuide() {
 
           <Title level={5}>执行命令</Title>
           <Paragraph>
-            收到 Webhook 后执行的 shell 命令，必须是 <Text code>ALLOWED_COMMANDS</Text> 白名单前缀内的命令
+            收到 Webhook 后执行的 shell 命令。本地执行时必须是 <Text code>ALLOWED_COMMANDS</Text> 白名单前缀内的命令
             （默认 <Text code>/usr/bin/git,/usr/bin/curl,/bin/bash,/bin/sh</Text>）。
             例如 <Text code>/bin/bash /opt/scripts/deploy.sh</Text>。
           </Paragraph>
 
+          <Title level={5}>执行位置</Title>
+          <Paragraph>
+            选「本地」则在 webhook 服务所在机器执行；选「SSH 主机」则在远端主机执行。
+            位置属于 Hook 而非脚本，同一个脚本可以被不同 Hook 派到不同主机上跑。
+            <Text strong> SSH 执行不受 ALLOWED_COMMANDS 白名单限制</Text>
+            ——白名单描述的是本机可执行文件，对远端无意义。
+          </Paragraph>
+
           <Title level={5}>工作目录</Title>
-          <Paragraph>命令执行时的 cwd，留空则为服务进程当前目录。</Paragraph>
+          <Paragraph>
+            命令执行时的 cwd，留空则为服务进程当前目录（SSH 执行时为登录目录）。
+            SSH 执行会先 <Text code>cd</Text> 到该目录，目录不存在则整次执行失败。
+          </Paragraph>
 
           <Title level={5}>成功响应消息</Title>
           <Paragraph>命令执行成功后 HTTP 响应里的 message 字段内容。</Paragraph>

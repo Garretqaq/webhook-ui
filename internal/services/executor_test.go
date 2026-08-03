@@ -81,3 +81,23 @@ func TestExecuteScriptCleansUpTempFile(t *testing.T) {
 		t.Errorf("expected temp dir cleaned, found %d entries", len(entries))
 	}
 }
+
+func TestExecuteScriptRelativeTmpDirWithWorkDir(t *testing.T) {
+	// DATA_DIR is relative by default; setting a hook working dir must not
+	// break resolution of the temp script path.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	defer os.Chdir(cwd)
+
+	e := NewExecutor([]string{"/bin", "/usr/bin"}, "./data")
+	result := e.ExecuteScript("sh", "pwd", nil, nil, "/tmp")
+	if !result.Success {
+		t.Fatalf("expected success, got error: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "tmp") {
+		t.Errorf("expected script to run in /tmp, got: %q", result.Output)
+	}
+}

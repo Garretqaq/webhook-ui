@@ -24,7 +24,6 @@ type Script struct {
 	Interpreter string    `json:"interpreter"`
 	Content     string    `json:"content"`
 	Description string    `json:"description"`
-	SSHHostID   string    `json:"ssh_host_id"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Form, Input, Select, Button, Card, message, Space, Radio } from 'antd'
 import { useNavigate, useParams } from 'react-router-dom'
-import { hookApi, scriptApi } from '../api/client'
-import type { Script } from '../api/client'
+import { hookApi, scriptApi, sshHostApi } from '../api/client'
+import type { Script, SSHHost } from '../api/client'
 
 const { TextArea } = Input
 
@@ -11,12 +11,15 @@ export default function HookEdit() {
   const [loading, setLoading] = useState(false)
   const [isNew, setIsNew] = useState(true)
   const [scripts, setScripts] = useState<Script[]>([])
+  const [sshHosts, setSSHHosts] = useState<SSHHost[]>([])
   const execMode = Form.useWatch('exec_mode', form)
+  const execLocation = Form.useWatch('exec_location', form)
   const navigate = useNavigate()
   const { id } = useParams()
 
   useEffect(() => {
     scriptApi.list().then(res => setScripts(res.data)).catch(() => {})
+    sshHostApi.list().then(res => setSSHHosts(res.data)).catch(() => {})
     if (id && id !== 'new') {
       setIsNew(false)
       loadHook(id)
@@ -29,6 +32,7 @@ export default function HookEdit() {
       form.setFieldsValue({
         ...res.data,
         exec_mode: res.data.script_id ? 'script' : 'command',
+        exec_location: res.data.ssh_host_id ? 'ssh' : 'local',
         pass_arguments: res.data.pass_arguments?.join('\n') || '',
         pass_headers: res.data.pass_headers?.join('\n') || '',
       })
@@ -45,10 +49,12 @@ export default function HookEdit() {
         ...values,
         command: useScript ? '' : values.command,
         script_id: useScript ? values.script_id : '',
+        ssh_host_id: values.exec_location === 'ssh' ? values.ssh_host_id : '',
         pass_arguments: values.pass_arguments?.split('\n').filter((s: string) => s.trim()) || [],
         pass_headers: values.pass_headers?.split('\n').filter((s: string) => s.trim()) || [],
       }
       delete data.exec_mode
+      delete data.exec_location
 
       if (isNew) {
         await hookApi.create(data)
@@ -75,6 +81,7 @@ export default function HookEdit() {
           hmac_algorithm: 'sha256',
           pass_payload_to: '',
           exec_mode: 'command',
+          exec_location: 'local',
         }}
       >
         {!isNew && (
@@ -117,13 +124,50 @@ export default function HookEdit() {
             name="command"
             label="执行命令"
             rules={[{ required: true, message: '请输入命令' }]}
-            extra="例如: /opt/scripts/deploy.sh 或 /usr/bin/git pull"
+            extra={
+              execLocation === 'ssh'
+                ? '在远端主机上执行，不受服务端 ALLOWED_COMMANDS 白名单限制'
+                : '例如: /opt/scripts/deploy.sh 或 /usr/bin/git pull，必须在服务端 ALLOWED_COMMANDS 白名单内'
+            }
           >
             <Input placeholder="/path/to/command" />
           </Form.Item>
         )}
 
-        <Form.Item name="working_dir" label="工作目录">
+        <Form.Item name="exec_location" label="执行位置">
+          <Radio.Group>
+            <Radio.Button value="local">本地</Radio.Button>
+            <Radio.Button value="ssh">SSH 主机</Radio.Button>
+          </Radio.Group>
+        </Form.Item>
+
+        {execLocation === 'ssh' && (
+          <Form.Item
+            name="ssh_host_id"
+            label="SSH 主机"
+            rules={[{ required: true, message: '请选择 SSH 主机' }]}
+            extra={
+              sshHosts.length === 0
+                ? '暂无主机，请先到「SSH 主机」创建'
+                : execMode === 'script'
+                  ? '脚本内容通过 stdin 在远端执行，不写入远端磁盘'
+                  : '命令在远端主机上执行'
+            }
+          >
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder="选择执行的主机"
+              options={sshHosts.map(h => ({ value: h.id, label: `${h.name} (${h.user}@${h.host}:${h.port})` }))}
+            />
+          </Form.Item>
+        )}
+
+        <Form.Item
+          name="working_dir"
+          label="工作目录"
+          extra="留空则使用默认目录。SSH 执行时会先 cd 到该目录，目录不存在则执行失败"
+        >
           <Input placeholder="/path/to/workdir (可选)" />
         </Form.Item>
 

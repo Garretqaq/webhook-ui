@@ -76,6 +76,17 @@ export default function ExecutionLogs() {
       },
     },
     {
+      title: '执行位置',
+      dataIndex: 'exec_target',
+      key: 'exec_target',
+      render: (target: string) =>
+        target === 'local'
+          ? <Tag>本地</Tag>
+          : target
+            ? <Tag color="purple">{target}</Tag>
+            : '-',
+    },
+    {
       title: '来源',
       dataIndex: 'trigger_source',
       key: 'trigger_source',
@@ -151,6 +162,10 @@ export default function ExecutionLogs() {
               <Tag color={currentExecution.status === 'success' ? 'green' : 'red'}>
                 {currentExecution.status}
               </Tag>
+            </Paragraph>
+            <Paragraph>
+              <Text strong>执行位置: </Text>
+              {currentExecution.exec_target || '-'}
             </Paragraph>
             <Paragraph>
               <Text strong>来源: </Text>

@@ -29,11 +29,11 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 
 	var hook models.Hook
 	err := database.DB.QueryRow(`
-		SELECT id, name, command, script_id, working_dir, response_message,
+		SELECT id, name, command, script_id, ssh_host_id, working_dir, response_message,
 		       hmac_secret, hmac_algorithm, trigger_token, pass_arguments, pass_headers, pass_payload_to
 		FROM hooks WHERE id = ?
 	`, hookID).Scan(
-		&hook.ID, &hook.Name, &hook.Command, &hook.ScriptID, &hook.WorkingDir,
+		&hook.ID, &hook.Name, &hook.Command, &hook.ScriptID, &hook.SSHHostID, &hook.WorkingDir,
 		&hook.ResponseMessage, &hook.HMACSecret, &hook.HMACAlgorithm, &hook.TriggerToken,
 		&hook.PassArguments, &hook.PassHeaders, &hook.PassPayloadTo,
 	)
@@ -77,7 +77,7 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 
 	env, args := h.buildCommandInput(&hook, c, payload)
 
-	execID := h.logExecutionStart(hookID, c.ClientIP())
+	execID := h.logExecutionStart(hookID, c.ClientIP(), execTarget(hook.SSHHostID))
 
 	result := h.execute(&hook, env, args)
 
@@ -100,23 +100,24 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 	}
 }
 
-// execute runs the hook's bound script, or its free-form command.
+// execute runs the hook's bound script, or its free-form command, at the
+// execution location configured on the hook.
 func (h *WebhookHandler) execute(hook *models.Hook, env map[string]string, args []string) *services.ExecuteResult {
 	if hook.ScriptID == "" {
-		return h.executor.Execute(hook, env, args)
+		return runCommand(h.executor, hook, args, env)
 	}
 
 	var script models.Script
 	err := database.DB.QueryRow(`
-		SELECT interpreter, content, ssh_host_id FROM scripts WHERE id = ?
-	`, hook.ScriptID).Scan(&script.Interpreter, &script.Content, &script.SSHHostID)
+		SELECT interpreter, content FROM scripts WHERE id = ?
+	`, hook.ScriptID).Scan(&script.Interpreter, &script.Content)
 	if err != nil {
 		return &services.ExecuteResult{
 			Success: false,
 			Error:   fmt.Sprintf("script not found: %s", hook.ScriptID),
 		}
 	}
-	return runScript(h.executor, script.Interpreter, script.Content, script.SSHHostID, args, env, hook.WorkingDir)
+	return runScript(h.executor, script.Interpreter, script.Content, hook.SSHHostID, args, env, hook.WorkingDir)
 }
 
 func (h *WebhookHandler) buildCommandInput(hook *models.Hook, c *gin.Context, payload []byte) (map[string]string, []string) {
@@ -162,11 +163,11 @@ func (h *WebhookHandler) buildCommandInput(hook *models.Hook, c *gin.Context, pa
 	return env, args
 }
 
-func (h *WebhookHandler) logExecutionStart(hookID, source string) int64 {
+func (h *WebhookHandler) logExecutionStart(hookID, source, target string) int64 {
 	result, err := database.DB.Exec(`
-		INSERT INTO executions (hook_id, trigger_source, status, started_at)
-		VALUES (?, ?, 'running', ?)
-	`, hookID, source, time.Now())
+		INSERT INTO executions (hook_id, trigger_source, exec_target, status, started_at)
+		VALUES (?, ?, ?, 'running', ?)
+	`, hookID, source, target, time.Now())
 	if err != nil {
 		return 0
 	}

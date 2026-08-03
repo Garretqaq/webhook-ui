@@ -42,6 +42,7 @@ type Hook struct {
 	Name            string      `json:"name"`
 	Command         string      `json:"command"`
 	ScriptID        string      `json:"script_id"`
+	SSHHostID       string      `json:"ssh_host_id"`
 	WorkingDir      string      `json:"working_dir"`
 	ResponseMessage string      `json:"response_message"`
 	HMACSecret      string      `json:"hmac_secret,omitempty"`

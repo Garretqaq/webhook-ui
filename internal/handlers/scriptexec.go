@@ -8,15 +8,33 @@ import (
 	"github.com/songguangzhi/webhook-ui/internal/database"
 	"github.com/songguangzhi/webhook-ui/internal/models"
 	"github.com/songguangzhi/webhook-ui/internal/services"
+	"golang.org/x/crypto/ssh"
 )
 
 // runScript executes a script locally or over SSH depending on sshHostID.
-// workDir only applies to local execution.
 func runScript(executor *services.Executor, interpreter, content, sshHostID string, args []string, env map[string]string, workDir string) *services.ExecuteResult {
 	if sshHostID == "" {
 		return executor.ExecuteScript(interpreter, content, args, env, workDir)
 	}
+	return runRemote(sshHostID, func(client *ssh.Client) *services.ExecuteResult {
+		return services.ExecuteScriptSSH(client, interpreter, content, args, env, workDir)
+	})
+}
 
+// runCommand executes a hook's free-form command locally (whitelist enforced)
+// or over SSH (whitelist does not apply — it describes the local machine).
+func runCommand(executor *services.Executor, hook *models.Hook, args []string, env map[string]string) *services.ExecuteResult {
+	if hook.SSHHostID == "" {
+		return executor.Execute(hook, env, args)
+	}
+	return runRemote(hook.SSHHostID, func(client *ssh.Client) *services.ExecuteResult {
+		return services.ExecuteCommandSSH(client, hook.Command, args, env, hook.WorkingDir)
+	})
+}
+
+// runRemote dials the host, hands the connection to run, and persists any
+// host key learned on first use.
+func runRemote(sshHostID string, run func(*ssh.Client) *services.ExecuteResult) *services.ExecuteResult {
 	host, err := loadSSHHost(sshHostID)
 	if err != nil {
 		return &services.ExecuteResult{Success: false, Error: fmt.Sprintf("ssh host not found: %s", sshHostID)}
@@ -30,7 +48,20 @@ func runScript(executor *services.Executor, interpreter, content, sshHostID stri
 
 	persistLearnedHostKey(host.ID, dialResult.LearnedHostKey)
 
-	return services.ExecuteScriptSSH(dialResult.Client, interpreter, content, args, env)
+	return run(dialResult.Client)
+}
+
+// execTarget renders where a hook runs, for the execution log snapshot. It
+// is stored as text so history stays readable after a host is deleted.
+func execTarget(sshHostID string) string {
+	if sshHostID == "" {
+		return "local"
+	}
+	host, err := loadSSHHost(sshHostID)
+	if err != nil {
+		return "ssh:" + sshHostID
+	}
+	return fmt.Sprintf("%s@%s:%d", host.User, host.Host, host.Port)
 }
 
 // persistLearnedHostKey stores a TOFU-learned host key (no-op when empty).

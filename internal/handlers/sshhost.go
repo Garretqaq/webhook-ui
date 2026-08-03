@@ -129,12 +129,12 @@ func (h *SSHHostHandler) Update(c *gin.Context) {
 func (h *SSHHostHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 
-	rows, err := database.DB.Query("SELECT name FROM scripts WHERE ssh_host_id = ?", id)
+	rows, err := database.DB.Query("SELECT name FROM hooks WHERE ssh_host_id = ?", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	var scriptNames []string
+	var hookNames []string
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
@@ -142,12 +142,12 @@ func (h *SSHHostHandler) Delete(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		scriptNames = append(scriptNames, name)
+		hookNames = append(hookNames, name)
 	}
 	rows.Close()
-	if len(scriptNames) > 0 {
+	if len(hookNames) > 0 {
 		c.JSON(http.StatusConflict, gin.H{
-			"error": fmt.Sprintf("主机被以下脚本引用，无法删除: %s", strings.Join(scriptNames, ", ")),
+			"error": fmt.Sprintf("主机被以下 Hook 引用，无法删除: %s", strings.Join(hookNames, ", ")),
 		})
 		return
 	}

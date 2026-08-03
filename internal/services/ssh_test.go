@@ -180,7 +180,7 @@ func TestExecuteScriptSSHPipesContentViaStdin(t *testing.T) {
 	defer result.Client.Close()
 
 	content := "echo hello from script"
-	execResult := ExecuteScriptSSH(result.Client, "bash", content, nil, nil)
+	execResult := ExecuteScriptSSH(result.Client, "bash", content, nil, nil, "")
 	if !execResult.Success {
 		t.Fatalf("expected success, got: %s", execResult.Error)
 	}
@@ -191,20 +191,73 @@ func TestExecuteScriptSSHPipesContentViaStdin(t *testing.T) {
 
 func TestExecuteScriptSSHBuildsCommand(t *testing.T) {
 	// bash/sh get "-s", python3 gets "-"
-	if got := sshScriptCommand("bash", nil, nil); !strings.HasPrefix(got, "bash -s --") {
+	if got := sshScriptCommand("bash", nil, nil, ""); !strings.HasPrefix(got, "bash -s --") {
 		t.Errorf("bash command prefix wrong: %q", got)
 	}
-	if got := sshScriptCommand("python3", nil, nil); !strings.HasPrefix(got, "python3 -") {
+	if got := sshScriptCommand("python3", nil, nil, ""); !strings.HasPrefix(got, "python3 -") {
 		t.Errorf("python3 command prefix wrong: %q", got)
+	}
+}
+
+func TestSSHScriptCommandWorkDir(t *testing.T) {
+	got := sshScriptCommand("bash", nil, map[string]string{"A": "1"}, "/srv/app")
+	if !strings.HasPrefix(got, "cd '/srv/app' && ") {
+		t.Errorf("workDir should prefix the command: %q", got)
+	}
+	if !strings.Contains(got, "A='1' bash -s --") {
+		t.Errorf("env should still precede interpreter: %q", got)
+	}
+
+	// a workDir containing a quote must not break out of the cd
+	got = sshScriptCommand("bash", nil, nil, "/tmp/it's")
+	if !strings.HasPrefix(got, `cd '/tmp/it'\''s' && `) {
+		t.Errorf("workDir not escaped: %q", got)
+	}
+}
+
+func TestSSHCommandLine(t *testing.T) {
+	got := sshCommandLine("deploy.sh", []string{"a b"}, map[string]string{"A": "1"}, "/srv/app")
+	want := "cd '/srv/app' && A='1' deploy.sh 'a b'"
+	if got != want {
+		t.Errorf("sshCommandLine = %q, want %q", got, want)
+	}
+
+	if got := sshCommandLine("echo ok", nil, nil, ""); got != "echo ok" {
+		t.Errorf("bare command should pass through, got %q", got)
+	}
+}
+
+func TestExecuteCommandSSH(t *testing.T) {
+	addr, _ := startTestServer(t)
+	h := testHost(addr)
+
+	result, err := DialSSH(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Client.Close()
+
+	execResult := ExecuteCommandSSH(result.Client, "echo ok", nil, nil, "")
+	if !execResult.Success {
+		t.Fatalf("expected success, got: %s", execResult.Error)
+	}
+	if !strings.Contains(execResult.Output, "ok") {
+		t.Errorf("expected command output, got: %q", execResult.Output)
+	}
+}
+
+func TestExecuteCommandSSHRejectsEmptyCommand(t *testing.T) {
+	if r := ExecuteCommandSSH(nil, "   ", nil, nil, ""); r.Success {
+		t.Fatal("empty command must be rejected before dialing a session")
 	}
 }
 
 func TestShellEscape(t *testing.T) {
 	cases := map[string]string{
-		"simple":    "'simple'",
+		"simple":     "'simple'",
 		"with space": "'with space'",
-		"it's":      "'it'\\''s'",
-		"":          "''",
+		"it's":       "'it'\\''s'",
+		"":           "''",
 	}
 	for in, want := range cases {
 		if got := shellEscape(in); got != want {
@@ -213,7 +266,7 @@ func TestShellEscape(t *testing.T) {
 	}
 
 	// env and args are escaped into the command
-	got := sshScriptCommand("bash", []string{"a b"}, map[string]string{"MY_VAR": "x'y"})
+	got := sshScriptCommand("bash", []string{"a b"}, map[string]string{"MY_VAR": "x'y"}, "")
 	if !strings.Contains(got, "MY_VAR='x'\\''y'") {
 		t.Errorf("env not escaped: %q", got)
 	}
@@ -232,7 +285,7 @@ func TestExecuteScriptSSHRejectsInvalidInterpreter(t *testing.T) {
 	}
 	defer result.Client.Close()
 
-	execResult := ExecuteScriptSSH(result.Client, "bash; touch /tmp/pwn", "echo hi", nil, nil)
+	execResult := ExecuteScriptSSH(result.Client, "bash; touch /tmp/pwn", "echo hi", nil, nil, "")
 	if execResult.Success {
 		t.Fatal("expected rejection of non-enum interpreter")
 	}
@@ -240,11 +293,11 @@ func TestExecuteScriptSSHRejectsInvalidInterpreter(t *testing.T) {
 
 func TestSSHScriptCommandSkipsInvalidEnvKeys(t *testing.T) {
 	got := sshScriptCommand("bash", nil, map[string]string{
-		"GOOD_KEY":      "1",
-		"BAD KEY":       "2",
-		"X=touch /tmp":  "3",
+		"GOOD_KEY":       "1",
+		"BAD KEY":        "2",
+		"X=touch /tmp":   "3",
 		"9LEADING_DIGIT": "4",
-	})
+	}, "")
 	if !strings.Contains(got, "GOOD_KEY='1'") {
 		t.Errorf("valid key missing: %q", got)
 	}

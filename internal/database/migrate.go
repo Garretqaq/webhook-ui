@@ -2,16 +2,20 @@ package database
 
 import "fmt"
 
-const schemaVersion = 6
+const schemaVersion = 7
 
 func Migrate() error {
+	return migrateTo(schemaVersion)
+}
+
+func migrateTo(target int) error {
 	var version int
 	err := DB.QueryRow("PRAGMA user_version").Scan(&version)
 	if err != nil {
 		return fmt.Errorf("get schema version: %w", err)
 	}
 
-	if version >= schemaVersion {
+	if version >= target {
 		return nil
 	}
 
@@ -80,9 +84,17 @@ func Migrate() error {
 		{ // 5 -> 6
 			`ALTER TABLE scripts ADD COLUMN ssh_host_id TEXT DEFAULT ''`,
 		},
+		{ // 6 -> 7: execution location belongs to the hook, not the script
+			`ALTER TABLE hooks ADD COLUMN ssh_host_id TEXT DEFAULT ''`,
+			`UPDATE hooks SET ssh_host_id = COALESCE(
+				(SELECT ssh_host_id FROM scripts WHERE scripts.id = hooks.script_id), '')
+			 WHERE script_id != ''`,
+			`ALTER TABLE scripts DROP COLUMN ssh_host_id`,
+			`ALTER TABLE executions ADD COLUMN exec_target TEXT DEFAULT ''`,
+		},
 	}
 
-	for v := version; v < schemaVersion; v++ {
+	for v := version; v < target; v++ {
 		for i, m := range migrations[v] {
 			if _, err := DB.Exec(m); err != nil {
 				return fmt.Errorf("migration to v%d, step %d: %w", v+1, i, err)
@@ -90,7 +102,7 @@ func Migrate() error {
 		}
 	}
 
-	if _, err := DB.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+	if _, err := DB.Exec(fmt.Sprintf("PRAGMA user_version = %d", target)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 

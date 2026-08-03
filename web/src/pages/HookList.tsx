@@ -74,6 +74,14 @@ export default function HookList() {
           : record.command,
     },
     {
+      title: '执行位置',
+      key: 'location',
+      render: (_: any, record: HookListItem) =>
+        record.ssh_host_id
+          ? <Tag color="purple">SSH: {record.ssh_host_name || record.ssh_host_id}</Tag>
+          : <Tag>本地</Tag>,
+    },
+    {
       title: 'HMAC',
       key: 'hmac',
       render: (_: any, record: HookListItem) => (

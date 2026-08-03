@@ -19,7 +19,8 @@
 
 - **一键自托管**：单二进制 + 前端 `go:embed` 打包，零外部依赖（SQLite 内建），克隆即用。
 - **Web 控制台**：可视化维护 Hook、脚本、SSH 主机，看执行日志，不用碰服务器文件。
-- **脚本管理**：脚本存数据库，支持 `bash`/`sh`/`python3`，页内试运行当前内容（无需保存）。
+- **脚本管理**：脚本存数据库，只管内容，支持 `bash`/`sh`/`python3`，页内试运行当前内容（无需保存）。
+- **执行位置在 Hook 上**：同一个脚本可被不同 Hook 派到本地或不同 SSH 主机执行。
 - **SSH 远程执行**：脚本通过 stdin 在远端跑，不落盘；Host Key 采用 TOFU 校验防劫持。
 - **多种触发校验**：固定 Token 或 HMAC 签名（SHA1/SHA256/SHA512），原生兼容 GitHub / GitLab。
 - **命令白名单**：`ALLOWED_COMMANDS` 限定可执行解释器，收口攻击面。
@@ -67,7 +68,7 @@ go build -ldflags "-X main.version=$(cat VERSION)" -o webhook-ui .
 启动后访问 `http://localhost:9000`，用 `ADMIN_USERNAME`（默认 `admin`）+ `ADMIN_PASSWORD` 登录。
 
 1. **建脚本**（可选）：脚本管理页 → 新建，写内容，点「试运行」验证。
-2. **建 Hook**：Hook 管理页 → 新建，二选一填「自由命令」或「绑定脚本」，配置 Token / HMAC。
+2. **建 Hook**：Hook 管理页 → 新建，二选一填「自由命令」或「绑定脚本」，选执行位置（本地 / SSH 主机），配置 Token / HMAC。
 3. **触发**：
 
 ```bash
@@ -130,7 +131,11 @@ GitHub Push 事件 → Hook 自动校验 `X-Hub-Signature-256`（HMAC SHA256）�
 
 ### SSH 远程执行
 
-脚本「执行位置」选 SSH 主机 → 脚本内容通过 stdin 远端执行（`bash -s`），不写远端磁盘。SSH 主机页可「测试连接」验证凭据。
+Hook 的「执行位置」选 SSH 主机即可远端执行：绑定脚本时内容通过 stdin 远端执行（`bash -s`），不写远端磁盘；自由命令则直接在远端跑。填了「工作目录」会先 `cd` 进去，目录不存在则执行失败。SSH 主机页可「测试连接」验证凭据。
+
+执行位置属于 Hook 而不是脚本，所以同一个部署脚本可以由 staging Hook 打到测试机、production Hook 打到生产机。执行日志会记录当次实际执行位置的快照。
+
+> ⚠️ **SSH 执行不受 `ALLOWED_COMMANDS` 白名单限制**——白名单描述的是本机可执行文件路径，对远端主机无意义。能编辑 Hook 的管理员即可在远端主机上执行任意命令。
 
 > **公网环境建议**：先用 `ssh-keyscan <host>` 取公钥并手动预填，避免首次连接被中间人截获。
 

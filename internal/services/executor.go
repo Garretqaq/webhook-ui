@@ -122,7 +122,14 @@ func (e *Executor) ExecuteScript(interpreter, content string, args []string, env
 		return &ExecuteResult{Success: false, Error: err.Error()}
 	}
 
-	cmdArgs := append([]string{tmpFile.Name()}, args...)
+	// Absolute: workDir changes the process cwd, so a relative tmp path
+	// (DATA_DIR defaults to "./data") would no longer resolve.
+	scriptPath, err := filepath.Abs(tmpFile.Name())
+	if err != nil {
+		return &ExecuteResult{Success: false, Error: err.Error()}
+	}
+
+	cmdArgs := append([]string{scriptPath}, args...)
 	cmd := exec.Command(binPath, cmdArgs...)
 	if workDir != "" {
 		cmd.Dir = workDir

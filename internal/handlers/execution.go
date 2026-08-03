@@ -22,7 +22,7 @@ func (h *ExecutionHandler) List(c *gin.Context) {
 	hookID := c.Query("hook_id")
 
 	query := `
-		SELECT id, hook_id, trigger_source, status, output, error, started_at, finished_at
+		SELECT id, hook_id, trigger_source, exec_target, status, output, error, started_at, finished_at
 		FROM executions
 	`
 	args := []interface{}{}
@@ -47,7 +47,7 @@ func (h *ExecutionHandler) List(c *gin.Context) {
 		var exec models.Execution
 		var finishedAt sql.NullTime
 		err := rows.Scan(
-			&exec.ID, &exec.HookID, &exec.TriggerSource, &exec.Status,
+			&exec.ID, &exec.HookID, &exec.TriggerSource, &exec.ExecTarget, &exec.Status,
 			&exec.Output, &exec.Error, &exec.StartedAt, &finishedAt,
 		)
 		if err != nil {
@@ -69,10 +69,10 @@ func (h *ExecutionHandler) Get(c *gin.Context) {
 	var finishedAt sql.NullTime
 
 	err := database.DB.QueryRow(`
-		SELECT id, hook_id, trigger_source, status, output, error, started_at, finished_at
+		SELECT id, hook_id, trigger_source, exec_target, status, output, error, started_at, finished_at
 		FROM executions WHERE id = ?
 	`, id).Scan(
-		&exec.ID, &exec.HookID, &exec.TriggerSource, &exec.Status,
+		&exec.ID, &exec.HookID, &exec.TriggerSource, &exec.ExecTarget, &exec.Status,
 		&exec.Output, &exec.Error, &exec.StartedAt, &finishedAt,
 	)
 

@@ -10,6 +10,7 @@ export interface Hook {
   name: string
   command: string
   script_id: string
+  ssh_host_id: string
   working_dir: string
   response_message: string
   hmac_secret?: string
@@ -26,12 +27,14 @@ export interface HookListItem extends Hook {
   hmac_enabled: boolean
   trigger_token_enabled: boolean
   script_name: string
+  ssh_host_name: string
 }
 
 export interface Execution {
   id: number
   hook_id: string
   trigger_source: string
+  exec_target: string
   status: string
   output: string
   error: string
@@ -45,13 +48,8 @@ export interface Script {
   interpreter: string
   content: string
   description: string
-  ssh_host_id: string
   created_at: string
   updated_at: string
-}
-
-export interface ScriptListItem extends Script {
-  ssh_host_name: string
 }
 
 export interface ScriptTestResult {
@@ -100,7 +98,7 @@ export const executionApi = {
 }
 
 export const scriptApi = {
-  list: () => client.get<ScriptListItem[]>('/scripts'),
+  list: () => client.get<Script[]>('/scripts'),
   get: (id: string) => client.get<Script>(`/scripts/${id}`),
   create: (script: Partial<Script>) => client.post<Script>('/scripts', script),
   update: (id: string, script: Partial<Script>) => client.put<Script>(`/scripts/${id}`, script),
