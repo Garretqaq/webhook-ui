@@ -1,6 +1,9 @@
 package services
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
 
 // Stream names for a chunk's origin.
 const (
@@ -14,6 +17,15 @@ const (
 // stops a sink from being shared.
 type LogSink interface {
 	WriteChunk(stream, chunk string)
+}
+
+// OutputStream bundles where an execution's output goes with how much of it is
+// retained, so the two stop travelling as a pair of loose parameters through
+// every execution entry point.
+type OutputStream struct {
+	Sink LogSink
+	// TailBytes caps each aggregated stream; 0 means unbounded.
+	TailBytes int
 }
 
 // streamCapture fans a process's two output streams into the per-stream
@@ -31,11 +43,11 @@ type streamCapture struct {
 	stderr *tailBuffer
 }
 
-func newStreamCapture(sink LogSink, tailBytes int) *streamCapture {
+func newStreamCapture(out OutputStream) *streamCapture {
 	return &streamCapture{
-		sink:   sink,
-		stdout: newTailBuffer(tailBytes),
-		stderr: newTailBuffer(tailBytes),
+		sink:   out.Sink,
+		stdout: newTailBuffer(out.TailBytes),
+		stderr: newTailBuffer(out.TailBytes),
 	}
 }
 
@@ -43,6 +55,12 @@ func (c *streamCapture) write(stream, chunk string) {
 	if chunk == "" {
 		return
 	}
+	// A remote host can emit output in any encoding — GBK is routine on Chinese
+	// Windows. Invalid UTF-8 would survive into the database and only turn into
+	// replacement characters at the JSON boundary, so it is replaced here, where
+	// the aggregate and the persisted chunks still agree on the bytes.
+	chunk = strings.ToValidUTF8(chunk, "\uFFFD")
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

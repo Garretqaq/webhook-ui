@@ -165,7 +165,7 @@ func (e *Executor) timeoutMessage() string {
 // exits. Output reaches the sink while the process is still running, which is
 // what lets a long execution be watched live instead of only after it ends.
 func (e *Executor) run(cmd *exec.Cmd, sink LogSink) *ExecuteResult {
-	capture := newStreamCapture(sink, e.logTailBytes)
+	capture := newStreamCapture(OutputStream{Sink: sink, TailBytes: e.logTailBytes})
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

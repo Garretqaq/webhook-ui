@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/songguangzhi/webhook-ui/internal/models"
@@ -121,21 +122,21 @@ func RunCommand(client *ssh.Client, command string) (string, error) {
 // workDir may be empty to run in the login directory; otherwise the remote
 // shell cds into it first and the whole execution fails if the directory
 // does not exist.
-func ExecuteScriptSSH(client *ssh.Client, targetOS, interpreter, content string, args []string, env map[string]string, workDir string) *ExecuteResult {
+func ExecuteScriptSSH(client *ssh.Client, targetOS, interpreter, content string, args []string, env map[string]string, workDir string, out OutputStream) *ExecuteResult {
 	if !models.IsInterpreterForOS(interpreter, targetOS) {
 		return &ExecuteResult{Success: false, Error: fmt.Sprintf("interpreter %q cannot run on a %s target", interpreter, targetOS)}
 	}
 	if targetOS == models.TargetOSWindows {
 		stdin := strings.NewReader(powershellPreamble(args, env, workDir) + content)
-		return runSSHSession(client, windowsScriptCommand, stdin)
+		return runSSHSession(client, windowsScriptCommand, stdin, out)
 	}
-	return runSSHSession(client, sshScriptCommand(interpreter, args, env, workDir), strings.NewReader(content))
+	return runSSHSession(client, sshScriptCommand(interpreter, args, env, workDir), strings.NewReader(content), out)
 }
 
 // ExecuteCommandSSH runs a free-form command on the remote host. Unlike
 // local execution there is no ALLOWED_COMMANDS whitelist — the whitelist
 // describes binaries on the webhook server, not on the remote machine.
-func ExecuteCommandSSH(client *ssh.Client, targetOS, command string, args []string, env map[string]string, workDir string) *ExecuteResult {
+func ExecuteCommandSSH(client *ssh.Client, targetOS, command string, args []string, env map[string]string, workDir string, out OutputStream) *ExecuteResult {
 	if strings.TrimSpace(command) == "" {
 		return &ExecuteResult{Success: false, Error: "command is empty"}
 	}
@@ -144,34 +145,55 @@ func ExecuteCommandSSH(client *ssh.Client, targetOS, command string, args []stri
 		if err != nil {
 			return &ExecuteResult{Success: false, Error: err.Error()}
 		}
-		return runSSHSession(client, line, nil)
+		return runSSHSession(client, line, nil, out)
 	}
-	return runSSHSession(client, sshCommandLine(command, args, env, workDir), nil)
+	return runSSHSession(client, sshCommandLine(command, args, env, workDir), nil, out)
 }
 
-func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader) *ExecuteResult {
+// runSSHSession runs remoteCmd and streams the remote host's output into out
+// as it arrives, so a remote execution can be watched live exactly like a
+// local one.
+func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader, out OutputStream) *ExecuteResult {
 	session, err := client.NewSession()
 	if err != nil {
 		return &ExecuteResult{Success: false, Error: err.Error()}
 	}
 
-	var stdout, stderr bytes.Buffer
-	session.Stdout = &stdout
-	session.Stderr = &stderr
+	capture := newStreamCapture(out)
 	session.Stdin = stdin
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		session.Close()
+		return &ExecuteResult{Success: false, Error: err.Error()}
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		session.Close()
+		return &ExecuteResult{Success: false, Error: err.Error()}
+	}
+
+	if err := session.Start(remoteCmd); err != nil {
+		session.Close()
+		return &ExecuteResult{Success: false, Error: err.Error()}
+	}
+
+	var readers sync.WaitGroup
+	readers.Add(2)
+	go pumpStream(&readers, capture, StreamStdout, stdout)
+	go pumpStream(&readers, capture, StreamStderr, stderr)
 
 	done := make(chan error, 1)
 	go func() {
-		done <- session.Run(remoteCmd)
+		readers.Wait()
+		done <- session.Wait()
 	}()
 
 	select {
 	case err := <-done:
 		session.Close()
-		result := &ExecuteResult{
-			Output: stdout.String(),
-			Error:  stderr.String(),
-		}
+		res, errOut := capture.result()
+		result := &ExecuteResult{Output: res, Error: errOut}
 		if err != nil {
 			result.Success = false
 			if result.Error == "" {
@@ -181,14 +203,23 @@ func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader) *Execu
 			result.Success = true
 		}
 		return result
-	case <-time.After(5 * time.Minute):
+	case <-time.After(executionTimeout):
+		// Closing the session unblocks the readers, unlike the local case where a
+		// surviving grandchild can hold the pipes open: these pipes live in this
+		// process and die with the session, so waiting here is bounded.
 		session.Close()
+		<-done
+		res, errOut := capture.result()
 		return &ExecuteResult{
 			Success: false,
-			Error:   "execution timeout (5 minutes)",
+			Output:  res,
+			Error:   strings.TrimLeft(errOut+"\n"+sshTimeoutMessage, "\n"),
 		}
 	}
 }
+
+// sshTimeoutMessage is derived from executionTimeout so the two cannot drift.
+var sshTimeoutMessage = fmt.Sprintf("execution timeout (%s)", executionTimeout)
 
 // sshScriptCommand builds the remote command: env assignments prefix the
 // interpreter call, args follow after the stdin-script flag.

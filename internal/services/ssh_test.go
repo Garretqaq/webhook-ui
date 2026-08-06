@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"github.com/songguangzhi/webhook-ui/internal/models"
 	"golang.org/x/crypto/ssh"
@@ -73,6 +75,17 @@ func startTestServer(t *testing.T) (addr string, hostKey ssh.PublicKey) {
 								cmd := string(req.Payload[4:]) // skip uint32 length prefix
 								if cmd == "echo ok" {
 									channel.Write([]byte("ok\n"))
+								} else if strings.Contains(cmd, "SLOWTEST") {
+									// Emit in stages so a test can observe output
+									// arriving before the session ends.
+									channel.Write([]byte("first\n"))
+									channel.Stderr().Write([]byte("err1\n"))
+									time.Sleep(700 * time.Millisecond)
+									channel.Write([]byte("second\n"))
+								} else if strings.Contains(cmd, "BINARYTEST") {
+									// Bytes that are not valid UTF-8, as a GBK
+									// Windows host would produce.
+									channel.Write([]byte{0xff, 0xfe, 'o', 'k', '\n'})
 								} else {
 									io.Copy(channel, channel) // echo stdin
 								}
@@ -180,7 +193,7 @@ func TestExecuteScriptSSHPipesContentViaStdin(t *testing.T) {
 	defer result.Client.Close()
 
 	content := "echo hello from script"
-	execResult := ExecuteScriptSSH(result.Client, models.TargetOSLinux, "bash", content, nil, nil, "")
+	execResult := ExecuteScriptSSH(result.Client, models.TargetOSLinux, "bash", content, nil, nil, "", OutputStream{})
 	if !execResult.Success {
 		t.Fatalf("expected success, got: %s", execResult.Error)
 	}
@@ -237,7 +250,7 @@ func TestExecuteCommandSSH(t *testing.T) {
 	}
 	defer result.Client.Close()
 
-	execResult := ExecuteCommandSSH(result.Client, models.TargetOSLinux, "echo ok", nil, nil, "")
+	execResult := ExecuteCommandSSH(result.Client, models.TargetOSLinux, "echo ok", nil, nil, "", OutputStream{})
 	if !execResult.Success {
 		t.Fatalf("expected success, got: %s", execResult.Error)
 	}
@@ -247,7 +260,7 @@ func TestExecuteCommandSSH(t *testing.T) {
 }
 
 func TestExecuteCommandSSHRejectsEmptyCommand(t *testing.T) {
-	if r := ExecuteCommandSSH(nil, models.TargetOSLinux, "   ", nil, nil, ""); r.Success {
+	if r := ExecuteCommandSSH(nil, models.TargetOSLinux, "   ", nil, nil, "", OutputStream{}); r.Success {
 		t.Fatal("empty command must be rejected before dialing a session")
 	}
 }
@@ -285,7 +298,7 @@ func TestExecuteScriptSSHRejectsInvalidInterpreter(t *testing.T) {
 	}
 	defer result.Client.Close()
 
-	execResult := ExecuteScriptSSH(result.Client, models.TargetOSLinux, "bash; touch /tmp/pwn", "echo hi", nil, nil, "")
+	execResult := ExecuteScriptSSH(result.Client, models.TargetOSLinux, "bash; touch /tmp/pwn", "echo hi", nil, nil, "", OutputStream{})
 	if execResult.Success {
 		t.Fatal("expected rejection of non-enum interpreter")
 	}
@@ -338,7 +351,7 @@ func TestExecuteScriptSSHWindowsPipesPreambleAndContent(t *testing.T) {
 	defer result.Client.Close()
 
 	execResult := ExecuteScriptSSH(result.Client, models.TargetOSWindows, "powershell",
-		"Write-Output $args[0]", []string{"v1"}, map[string]string{"MY_VAR": "x"}, `D:\app`)
+		"Write-Output $args[0]", []string{"v1"}, map[string]string{"MY_VAR": "x"}, `D:\app`, OutputStream{})
 	if !execResult.Success {
 		t.Fatalf("expected success, got: %s", execResult.Error)
 	}
@@ -360,7 +373,7 @@ func TestExecuteScriptSSHRejectsInterpreterForWrongOS(t *testing.T) {
 		{models.TargetOSLinux, "powershell"},
 	}
 	for _, c := range cases {
-		if r := ExecuteScriptSSH(nil, c.targetOS, c.interpreter, "echo hi", nil, nil, ""); r.Success {
+		if r := ExecuteScriptSSH(nil, c.targetOS, c.interpreter, "echo hi", nil, nil, "", OutputStream{}); r.Success {
 			t.Errorf("%s on a %s target must be rejected before dialing", c.interpreter, c.targetOS)
 		}
 	}
@@ -424,8 +437,95 @@ func TestCmdQuoteRejectsUnquotableValues(t *testing.T) {
 }
 
 func TestExecuteCommandSSHWindowsRejectsUnquotableArg(t *testing.T) {
-	r := ExecuteCommandSSH(nil, models.TargetOSWindows, "echo", []string{`x" & calc.exe`}, nil, "")
+	r := ExecuteCommandSSH(nil, models.TargetOSWindows, "echo", []string{`x" & calc.exe`}, nil, "", OutputStream{})
 	if r.Success {
 		t.Fatal("an arg that breaks cmd.exe quoting must be rejected before dialing")
+	}
+}
+
+func TestExecuteCommandSSHStreamsBeforeSessionEnds(t *testing.T) {
+	addr, _ := startTestServer(t)
+	h := testHost(addr)
+	result, err := DialSSH(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Client.Close()
+
+	sink := newRecordingSink()
+	done := make(chan *ExecuteResult, 1)
+	go func() {
+		done <- ExecuteCommandSSH(result.Client, models.TargetOSLinux, "SLOWTEST", nil, nil, "",
+			OutputStream{Sink: sink})
+	}()
+
+	select {
+	case <-sink.first:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no chunk reached the sink before the timeout — remote output is still buffered until the session ends")
+	}
+	select {
+	case <-done:
+		t.Fatal("the session finished before the first chunk was observed; the server's pause should have kept it open")
+	default:
+	}
+
+	execResult := <-done
+	if !execResult.Success {
+		t.Fatalf("expected success, got: %s", execResult.Error)
+	}
+	if got := sink.textFor(StreamStdout); !strings.Contains(got, "first") || !strings.Contains(got, "second") {
+		t.Errorf("sink missing stdout, got %q", got)
+	}
+	if got := sink.textFor(StreamStderr); !strings.Contains(got, "err1") {
+		t.Errorf("remote stderr was not labelled as stderr, got %q", got)
+	}
+	if !strings.Contains(execResult.Output, "second") || !strings.Contains(execResult.Error, "err1") {
+		t.Errorf("aggregates wrong: out=%q err=%q", execResult.Output, execResult.Error)
+	}
+}
+
+func TestExecuteCommandSSHSanitisesNonUTF8Output(t *testing.T) {
+	addr, _ := startTestServer(t)
+	h := testHost(addr)
+	result, err := DialSSH(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Client.Close()
+
+	sink := newRecordingSink()
+	execResult := ExecuteCommandSSH(result.Client, models.TargetOSLinux, "BINARYTEST", nil, nil, "",
+		OutputStream{Sink: sink})
+
+	if !utf8.ValidString(execResult.Output) {
+		t.Errorf("aggregate holds invalid UTF-8: %q", execResult.Output)
+	}
+	if got := sink.textFor(StreamStdout); !utf8.ValidString(got) {
+		t.Errorf("persisted chunk holds invalid UTF-8: %q", got)
+	}
+	if !strings.Contains(execResult.Output, "ok") {
+		t.Errorf("valid bytes must survive sanitising, got %q", execResult.Output)
+	}
+}
+
+func TestExecuteScriptSSHTailLimitAppliesToRemoteOutput(t *testing.T) {
+	addr, _ := startTestServer(t)
+	h := testHost(addr)
+	result, err := DialSSH(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Client.Close()
+
+	// The test server echoes stdin, so the script content comes straight back.
+	content := strings.Repeat("0123456789", 20)
+	execResult := ExecuteScriptSSH(result.Client, models.TargetOSLinux, "bash", content, nil, nil, "",
+		OutputStream{TailBytes: 16})
+	if !execResult.Success {
+		t.Fatalf("expected success, got: %s", execResult.Error)
+	}
+	if len(execResult.Output) > 16 {
+		t.Errorf("remote aggregate ignored the tail limit: %d bytes", len(execResult.Output))
 	}
 }
