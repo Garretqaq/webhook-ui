@@ -27,6 +27,9 @@ type Config struct {
 	// in a queue of at most MaxQueuedExecutions before triggers are refused.
 	MaxConcurrentExecutions int
 	MaxQueuedExecutions     int
+	// RetentionDays bounds how long finished executions and their logs are
+	// kept. 0 disables cleanup entirely, for an operator who wants everything.
+	RetentionDays int
 }
 
 func Load() *Config {
@@ -43,6 +46,7 @@ func Load() *Config {
 		LogTailBytes:            getEnvInt("LOG_TAIL_BYTES", 5*1024*1024),
 		MaxConcurrentExecutions: getEnvInt("MAX_CONCURRENT_EXECUTIONS", 10),
 		MaxQueuedExecutions:     getEnvInt("MAX_QUEUED_EXECUTIONS", 100),
+		RetentionDays:           getEnvInt("RETENTION_DAYS", 30),
 	}
 
 	cfg.SessionSecret = os.Getenv("SESSION_SECRET")

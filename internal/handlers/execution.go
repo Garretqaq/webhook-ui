@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -223,4 +224,57 @@ func (h *ExecutionHandler) Cancel(c *gin.Context) {
 	// The executing goroutine writes the final status; answering before it does
 	// keeps the request from waiting on a process that may take a moment to die.
 	c.JSON(http.StatusAccepted, gin.H{"message": "cancellation requested"})
+}
+
+// CleanupOldExecutions deletes finished executions older than cutoff, and
+// their logs. The logs have to go explicitly: the connection never enables the
+// foreign_keys pragma, so the ON DELETE CASCADE declared on execution_logs is
+// inert — the same reason the hooks FK above executions has always been inert.
+// (Enabling it now would turn that on for real and start deleting execution
+// history when a hook is deleted, which is a separate behaviour change.)
+//
+// Only finished rows are touched; an old execution still marked running is
+// either genuinely in flight or left behind by a crash, and neither should be
+// silently deleted by a retention sweep.
+func CleanupOldExecutions(cutoff time.Time) (int64, error) {
+	ids, err := database.DB.Query(`
+		SELECT id FROM executions
+		WHERE finished_at IS NOT NULL AND started_at < ?
+	`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	var toDelete []int64
+	for ids.Next() {
+		var id int64
+		if err := ids.Scan(&id); err != nil {
+			ids.Close()
+			return 0, err
+		}
+		toDelete = append(toDelete, id)
+	}
+	ids.Close()
+	if len(toDelete) == 0 {
+		return 0, nil
+	}
+
+	marks := strings.Repeat("?,", len(toDelete))
+	marks = marks[:len(marks)-1]
+	args := make([]interface{}, len(toDelete))
+	for i, id := range toDelete {
+		args[i] = id
+	}
+
+	if _, err := database.DB.Exec(
+		"DELETE FROM execution_logs WHERE execution_id IN ("+marks+")", args...,
+	); err != nil {
+		return 0, err
+	}
+	result, err := database.DB.Exec(
+		"DELETE FROM executions WHERE id IN ("+marks+")", args...,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
