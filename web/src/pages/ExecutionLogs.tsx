@@ -62,19 +62,25 @@ export default function ExecutionLogs() {
       await executionApi.cancel(id)
       message.success('已请求中断')
       loadData()
+      // The open modal holds its own copy of the record, so without this its
+      // button would survive the cancel and 409 on the next click.
+      if (currentExecution?.id === id) {
+        const fresh = await executionApi.get(id)
+        setCurrentExecution(fresh.data)
+      }
     } catch (error: any) {
       message.error(error.response?.data?.error || '中断失败')
     }
   }
 
-  const cancelButton = (record: Execution, extra?: object) =>
+  const cancelButton = (record: Execution) =>
     cancellable(record.status) ? (
       <Popconfirm
         title="确定中断这次执行?"
         description="本地执行会连同子进程一起终止；已脱离 SSH 会话的远端进程无法中断"
         onConfirm={() => cancelExecution(record.id)}
       >
-        <Button danger size="small" {...extra}>中断</Button>
+        <Button danger size="small">中断</Button>
       </Popconfirm>
     ) : null
 

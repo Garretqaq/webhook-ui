@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -290,7 +292,7 @@ func TestAsyncExecutionPanicDoesNotTakeTheProcessDown(t *testing.T) {
 				h.logExecutionEnd(execID, models.StatusFailed, "", "execution panicked")
 			}
 		}()
-		runner.Start()
+		runner.Start(nil)
 		defer runner.Finish()
 		panic("boom")
 	}()
@@ -410,5 +412,44 @@ func TestSyncExecutionIsNotCancellable(t *testing.T) {
 	}
 	if cancels.Cancel(2) {
 		t.Error("the second cancel must be refused, not panic on a closed channel")
+	}
+}
+
+func TestCancelWhileQueuedNeverStartsTheProcess(t *testing.T) {
+	setupExecDB(t)
+	asyncHook(t, "h-hog", "sleep 30", 0)
+	// The queued script would leave a marker file if it ever ran.
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "ran")
+	asyncHook(t, "h-queued", "touch "+marker+"; sleep 30", 0)
+
+	cancels := NewCancelRegistry()
+	runner := NewRunner(1, 4) // one slot, so the second execution waits
+	t.Cleanup(runner.WaitIdle)
+
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	h := NewWebhookHandler(services.NewExecutor([]string{shPath}, t.TempDir()), 1024, runner, cancels)
+
+	_, first := triggerHook(t, h, "h-hog")
+	waitForStatus(t, int64(first["execution_id"].(float64)), models.StatusRunning)
+
+	_, second := triggerHook(t, h, "h-queued")
+	queuedID := int64(second["execution_id"].(float64))
+
+	w, _ := cancelExecution(t, NewExecutionHandler(cancels), queuedID)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("cancelling a queued execution got %d; it must be stoppable too", w.Code)
+	}
+
+	waitForStatus(t, queuedID, models.StatusCanceled)
+
+	// Freeing the slot must not resurrect it.
+	cancels.Cancel(int64(first["execution_id"].(float64)))
+	time.Sleep(500 * time.Millisecond)
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("the queued script ran anyway; cancelling while queued must stop it, not defer it")
 	}
 }

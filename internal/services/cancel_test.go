@@ -45,3 +45,38 @@ func TestNilCancelChannelNeverFires(t *testing.T) {
 		t.Error("Canceled must stay false when nothing cancelled it")
 	}
 }
+
+func TestCancelIsNotLostWhenTheProcessExitsAtTheSameMoment(t *testing.T) {
+	e := newTestExecutor(t)
+
+	// Already closed: done and Cancel are both ready the instant the script
+	// finishes, and select picks between ready cases at random. Reporting the
+	// run as a plain success would erase the fact that it was stopped.
+	cancel := make(chan struct{})
+	close(cancel)
+
+	for i := 0; i < 20; i++ {
+		result := e.ExecuteScript("bash", "echo quick", nil, nil, "", ExecOptions{Cancel: cancel})
+		if !result.Canceled {
+			t.Fatalf("attempt %d reported a cancelled run as not cancelled: %+v", i, result)
+		}
+		if result.Success {
+			t.Fatalf("attempt %d reported success for a cancelled run", i)
+		}
+	}
+}
+
+func TestSealedCaptureRefusesLateWrites(t *testing.T) {
+	sink := newRecordingSink()
+	c := newStreamCapture(ExecOptions{Sink: sink})
+	c.write(StreamStdout, "before")
+	c.result()
+
+	// An aborted run returns while its readers may still be draining; anything
+	// they produce now would land below the cancellation marker.
+	c.write(StreamStdout, "after")
+
+	if got := sink.textFor(StreamStdout); strings.Contains(got, "after") {
+		t.Errorf("a sealed capture accepted a late write: %q", got)
+	}
+}

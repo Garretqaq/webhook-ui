@@ -178,14 +178,38 @@ func (e *Executor) run(cmd *exec.Cmd, opts ExecOptions) *ExecuteResult {
 	go pumpStream(&readers, capture, StreamStdout, stdout)
 	go pumpStream(&readers, capture, StreamStderr, stderr)
 
+	// reaped guards the raw group signal. os.Process.Kill refuses to act after
+	// Wait has reaped the child, but syscall.Kill on the group has no such
+	// guard, and the kernel is free to hand that group id to something else.
+	var killMu sync.Mutex
+	reaped := false
+
 	done := make(chan error, 1)
 	go func() {
 		readers.Wait()
-		done <- cmd.Wait()
+		err := cmd.Wait()
+		killMu.Lock()
+		reaped = true
+		killMu.Unlock()
+		done <- err
 	}()
+
+	kill := func() {
+		killMu.Lock()
+		defer killMu.Unlock()
+		if !reaped {
+			killProcessTree(cmd)
+		}
+	}
 
 	select {
 	case err := <-done:
+		// A cancellation landing as the process exits leaves both cases ready,
+		// and select picks at random — so ask outright rather than reporting a
+		// stopped run as one that finished on its own.
+		if canceled(opts.Cancel) {
+			return abortResult(capture, canceledMessage, true)
+		}
 		out, errOut := capture.result()
 		result := &ExecuteResult{Output: out, Error: errOut}
 		if err != nil {
@@ -198,29 +222,11 @@ func (e *Executor) run(cmd *exec.Cmd, opts ExecOptions) *ExecuteResult {
 		}
 		return result
 	case <-timeoutChan(opts.Timeout):
-		return e.abort(cmd, capture, timeoutMessage(opts.Timeout), false)
+		kill()
+		return abortResult(capture, timeoutMessage(opts.Timeout), false)
 	case <-opts.Cancel:
-		return e.abort(cmd, capture, "execution canceled", true)
-	}
-}
-
-// abort kills the process group and returns whatever it produced first.
-//
-// It does not wait for the readers. They only see EOF once every descendant
-// has closed the pipes, and a descendant that ignores the signal would
-// otherwise keep a timeout or a cancellation pending indefinitely — which is
-// exactly what neither is allowed to do. capture is mutex-guarded, so reading
-// it while the orphaned readers may still be writing is safe; they exit on
-// their own.
-func (e *Executor) abort(cmd *exec.Cmd, capture *streamCapture, reason string, canceled bool) *ExecuteResult {
-	killProcessTree(cmd)
-
-	out, errOut := capture.result()
-	return &ExecuteResult{
-		Success:  false,
-		Canceled: canceled,
-		Output:   out,
-		Error:    strings.TrimLeft(errOut+"\n"+reason, "\n"),
+		kill()
+		return abortResult(capture, canceledMessage, true)
 	}
 }
 

@@ -13,6 +13,38 @@ func timeoutMessage(d time.Duration) string {
 	return fmt.Sprintf("execution timeout (%s)", d)
 }
 
+// canceledMessage is what an operator-stopped execution records, in one place
+// so the local and remote branches cannot say it differently.
+const canceledMessage = "execution canceled"
+
+// canceled reports whether ch has already been closed, without blocking.
+func canceled(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+// abortResult assembles what an execution stopped early has to report: the
+// output it managed to produce, with the reason appended to stderr.
+//
+// The readers are deliberately not waited on. They only see EOF once every
+// descendant has closed the pipes, and a descendant ignoring the signal would
+// otherwise keep a timeout or a cancellation pending indefinitely — exactly
+// what neither is allowed to do. capture.result seals the capture, so those
+// orphaned readers cannot append below a cancellation marker written after it.
+func abortResult(capture *streamCapture, reason string, wasCanceled bool) *ExecuteResult {
+	out, errOut := capture.result()
+	return &ExecuteResult{
+		Success:  false,
+		Canceled: wasCanceled,
+		Output:   out,
+		Error:    strings.TrimLeft(errOut+"\n"+reason, "\n"),
+	}
+}
+
 // Stream names for a chunk's origin.
 const (
 	StreamStdout = "stdout"
@@ -54,6 +86,9 @@ type streamCapture struct {
 	sink   LogSink
 	stdout *tailBuffer
 	stderr *tailBuffer
+	// sealed stops late writes once the result has been taken, so an aborted
+	// run's log cannot grow past the point its outcome was decided.
+	sealed bool
 	// pending holds the trailing bytes of a rune that a read cut in half, per
 	// stream, until the rest of it arrives.
 	pending map[string][]byte
@@ -74,6 +109,9 @@ func (c *streamCapture) write(stream, chunk string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.sealed {
+		return
+	}
 
 	// A read boundary lands wherever the pipe happened to fill, so a multi-byte
 	// rune is routinely cut in half. Sanitising each read on its own would turn
@@ -118,6 +156,7 @@ func (c *streamCapture) result() (stdout, stderr string) {
 			c.emit(stream, string(leftover))
 		}
 	}
+	c.sealed = true
 	return c.stdout.String(), c.stderr.String()
 }
 

@@ -79,7 +79,7 @@ func TestRunnerCapsConcurrentStarts(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			defer slot.Release()
-			r.Start()
+			r.Start(nil)
 			defer r.Finish()
 
 			mu.Lock()
@@ -115,8 +115,48 @@ func TestRunnerQueueDrainsAsSlotsFree(t *testing.T) {
 		if err != nil {
 			t.Fatalf("admission %d failed: %v", i, err)
 		}
-		r.Start()
+		r.Start(nil)
 		r.Finish()
 		slot.Release()
+	}
+}
+
+func TestStartGivesUpWhenCancelledWhileQueued(t *testing.T) {
+	// One slot, already taken: the second execution is parked in Start. An
+	// execution waiting behind a full queue still has to be stoppable, and
+	// starting its process only to kill it is not what stopping means.
+	r := NewRunner(1, 4)
+	held, err := r.Admit("h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+	r.Start(nil)
+	defer r.Finish()
+
+	waiting, err := r.Admit("h2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer waiting.Release()
+
+	cancel := make(chan struct{})
+	got := make(chan bool, 1)
+	go func() { got <- r.Start(cancel) }()
+
+	select {
+	case <-got:
+		t.Fatal("Start returned while the only slot was still held")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(cancel)
+	select {
+	case started := <-got:
+		if started {
+			t.Error("Start reported a slot it never got")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a cancelled wait must not stay parked")
 	}
 }

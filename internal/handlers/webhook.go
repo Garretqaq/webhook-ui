@@ -259,23 +259,25 @@ func (h *WebhookHandler) triggerAsync(c *gin.Context, hook *models.Hook, env map
 			}
 		}()
 
-		h.runner.Start()
+		opts := h.execOptions(hook, execID, cancel)
+
+		// Cancelled while waiting behind a full queue: nothing ever started, so
+		// there is nothing to kill and no output to keep.
+		if !h.runner.Start(cancel) {
+			markCanceled(opts.Sink)
+			h.logExecutionEnd(execID, models.StatusCanceled, "", "canceled before it started")
+			return
+		}
 		defer h.runner.Finish()
 
 		h.markRunning(execID)
-		opts := h.execOptions(hook, execID, cancel)
 		result := h.execute(hook, env, args, opts)
 
 		status := models.StatusSuccess
 		switch {
 		case result.Canceled:
 			status = models.StatusCanceled
-			// The log is the only place the two are told apart after the fact:
-			// a script that died on its own looks identical to one that was
-			// stopped, unless the stop leaves a mark of its own.
-			if opts.Sink != nil {
-				opts.Sink.WriteChunk(services.StreamStderr, "\n--- 已被手动中断 ---\n")
-			}
+			markCanceled(opts.Sink)
 		case !result.Success:
 			status = models.StatusFailed
 		}
@@ -296,4 +298,15 @@ func (h *WebhookHandler) markRunning(execID int64) {
 	); err != nil {
 		log.Printf("mark execution %d running: %v", execID, err)
 	}
+}
+
+// markCanceled leaves a trace in the log. It is the only place the two are
+// told apart after the fact: a script that died on its own looks identical to
+// one that was stopped, unless the stop leaves a mark of its own. The capture
+// is sealed by then, so nothing from the dying process lands below it.
+func markCanceled(sink services.LogSink) {
+	if sink == nil {
+		return
+	}
+	sink.WriteChunk(services.StreamStderr, "\n--- 已被手动中断 ---\n")
 }

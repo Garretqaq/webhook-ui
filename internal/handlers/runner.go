@@ -93,10 +93,17 @@ func (s *Slot) Release() {
 	s.runner.wg.Done()
 }
 
-// Start blocks until a running slot frees up. Callers run it on the goroutine
-// that does the work.
-func (r *Runner) Start() {
-	r.slots <- struct{}{}
+// Start blocks until a running slot frees up, and reports whether it got one.
+// It gives up if cancel closes first: an execution waiting behind a full queue
+// is still cancellable, and starting the process only to kill it immediately
+// is not what "stop it" means.
+func (r *Runner) Start(cancel <-chan struct{}) bool {
+	select {
+	case r.slots <- struct{}{}:
+		return true
+	case <-cancel:
+		return false
+	}
 }
 
 // Finish gives the running slot back.
