@@ -2,7 +2,7 @@ package database
 
 import "fmt"
 
-const schemaVersion = 8
+const schemaVersion = 9
 
 func Migrate() error {
 	return migrateTo(schemaVersion)
@@ -94,6 +94,18 @@ func migrateTo(target int) error {
 		},
 		{ // 7 -> 8: remote command syntax depends on the target's OS
 			`ALTER TABLE ssh_hosts ADD COLUMN target_os TEXT NOT NULL DEFAULT 'linux'`,
+		},
+		{ // 8 -> 9: output is streamed in chunks so a running execution can be watched
+			`CREATE TABLE IF NOT EXISTS execution_logs (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				execution_id INTEGER NOT NULL,
+				seq INTEGER NOT NULL,
+				stream TEXT NOT NULL,
+				chunk TEXT NOT NULL,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_execution_logs_exec_seq ON execution_logs(execution_id, seq)`,
 		},
 	}
 

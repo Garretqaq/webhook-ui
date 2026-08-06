@@ -1,26 +1,32 @@
 package services
 
 import (
-	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/songguangzhi/webhook-ui/internal/models"
 )
 
+const executionTimeout = 5 * time.Minute
+
 type Executor struct {
 	allowedCommands []string
 	tmpDir          string
+	// logTailBytes caps each aggregated stream; 0 means unbounded.
+	logTailBytes int
 }
 
-func NewExecutor(allowedCommands []string, dataDir string) *Executor {
+func NewExecutor(allowedCommands []string, dataDir string, logTailBytes int) *Executor {
 	return &Executor{
 		allowedCommands: allowedCommands,
 		tmpDir:          filepath.Join(dataDir, "tmp"),
+		logTailBytes:    logTailBytes,
 	}
 }
 
@@ -63,7 +69,7 @@ type ExecuteResult struct {
 	Success bool
 }
 
-func (e *Executor) Execute(hook *models.Hook, env map[string]string, args []string) *ExecuteResult {
+func (e *Executor) Execute(hook *models.Hook, env map[string]string, args []string, sink LogSink) *ExecuteResult {
 	if !e.isAllowed(hook.Command) {
 		return &ExecuteResult{
 			Success: false,
@@ -80,13 +86,14 @@ func (e *Executor) Execute(hook *models.Hook, env map[string]string, args []stri
 	}
 
 	applyEnv(cmd, env)
-	return runWithTimeout(cmd)
+	return e.run(cmd, sink)
 }
 
 // ExecuteScript writes content to a temp file and runs it with the given
 // interpreter. The interpreter binary must pass the command whitelist.
-// workDir may be empty to inherit the current directory.
-func (e *Executor) ExecuteScript(interpreter, content string, args []string, env map[string]string, workDir string) *ExecuteResult {
+// workDir may be empty to inherit the current directory. sink may be nil,
+// in which case output is only aggregated onto the result.
+func (e *Executor) ExecuteScript(interpreter, content string, args []string, env map[string]string, workDir string, sink LogSink) *ExecuteResult {
 	if !e.isAllowed(interpreter) {
 		return &ExecuteResult{
 			Success: false,
@@ -135,7 +142,7 @@ func (e *Executor) ExecuteScript(interpreter, content string, args []string, env
 		cmd.Dir = workDir
 	}
 	applyEnv(cmd, env)
-	return runWithTimeout(cmd)
+	return e.run(cmd, sink)
 }
 
 func applyEnv(cmd *exec.Cmd, env map[string]string) {
@@ -145,22 +152,42 @@ func applyEnv(cmd *exec.Cmd, env map[string]string) {
 	}
 }
 
-func runWithTimeout(cmd *exec.Cmd) *ExecuteResult {
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+// run starts cmd and streams both of its output streams into capture until it
+// exits. Output reaches the sink while the process is still running, which is
+// what lets a long execution be watched live instead of only after it ends.
+func (e *Executor) run(cmd *exec.Cmd, sink LogSink) *ExecuteResult {
+	capture := newStreamCapture(sink, e.logTailBytes)
 
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return &ExecuteResult{Success: false, Error: err.Error()}
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return &ExecuteResult{Success: false, Error: err.Error()}
+	}
+
+	if err := cmd.Start(); err != nil {
+		return &ExecuteResult{Success: false, Error: err.Error()}
+	}
+
+	var readers sync.WaitGroup
+	readers.Add(2)
+	go pumpStream(&readers, capture, StreamStdout, stdout)
+	go pumpStream(&readers, capture, StreamStderr, stderr)
+
+	// Both pipes reach EOF when the process dies — including when it is killed
+	// on timeout — so waiting on the readers first cannot outlive the process.
 	done := make(chan error, 1)
 	go func() {
-		done <- cmd.Run()
+		readers.Wait()
+		done <- cmd.Wait()
 	}()
 
 	select {
 	case err := <-done:
-		result := &ExecuteResult{
-			Output: stdout.String(),
-			Error:  stderr.String(),
-		}
+		out, errOut := capture.result()
+		result := &ExecuteResult{Output: out, Error: errOut}
 		if err != nil {
 			result.Success = false
 			if result.Error == "" {
@@ -170,11 +197,29 @@ func runWithTimeout(cmd *exec.Cmd) *ExecuteResult {
 			result.Success = true
 		}
 		return result
-	case <-time.After(5 * time.Minute):
+	case <-time.After(executionTimeout):
 		cmd.Process.Kill()
+		<-done
+		out, _ := capture.result()
 		return &ExecuteResult{
 			Success: false,
+			Output:  out,
 			Error:   "execution timeout (5 minutes)",
+		}
+	}
+}
+
+// pumpStream forwards everything r produces into capture, chunk by chunk.
+func pumpStream(wg *sync.WaitGroup, capture *streamCapture, stream string, r io.Reader) {
+	defer wg.Done()
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			capture.write(stream, string(buf[:n]))
+		}
+		if err != nil {
+			return
 		}
 	}
 }

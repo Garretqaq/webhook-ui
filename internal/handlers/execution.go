@@ -63,6 +63,71 @@ func (h *ExecutionHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, executions)
 }
 
+// maxLogChunksPerResponse bounds one poll so a client that has fallen far
+// behind cannot pull an entire multi-megabyte log into memory at once.
+const maxLogChunksPerResponse = 500
+
+// Logs serves an execution's output incrementally. Clients poll with the
+// next_seq from their previous response.
+//
+// oldest_seq matters because the log is capped and the head is rolled off: a
+// client whose cursor is below oldest_seq has lost a stretch it will never
+// see, and only it can tell, since the gap is invisible in the chunks alone.
+func (h *ExecutionHandler) Logs(c *gin.Context) {
+	id := c.Param("id")
+	afterSeq, _ := strconv.ParseInt(c.DefaultQuery("after_seq", "0"), 10, 64)
+
+	var status string
+	var finishedAt sql.NullTime
+	err := database.DB.QueryRow(
+		"SELECT status, finished_at FROM executions WHERE id = ?", id,
+	).Scan(&status, &finishedAt)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "execution not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	rows, err := database.DB.Query(`
+		SELECT seq, stream, chunk FROM execution_logs
+		WHERE execution_id = ? AND seq > ?
+		ORDER BY seq LIMIT ?
+	`, id, afterSeq, maxLogChunksPerResponse)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	chunks := []models.ExecutionLogChunk{}
+	nextSeq := afterSeq
+	for rows.Next() {
+		var chunk models.ExecutionLogChunk
+		if err := rows.Scan(&chunk.Seq, &chunk.Stream, &chunk.Text); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		chunks = append(chunks, chunk)
+		nextSeq = chunk.Seq
+	}
+
+	var oldestSeq sql.NullInt64
+	database.DB.QueryRow(
+		"SELECT MIN(seq) FROM execution_logs WHERE execution_id = ?", id,
+	).Scan(&oldestSeq)
+
+	c.JSON(http.StatusOK, gin.H{
+		"chunks":     chunks,
+		"next_seq":   nextSeq,
+		"oldest_seq": oldestSeq.Int64,
+		"status":     status,
+		"finished":   finishedAt.Valid,
+	})
+}
+
 func (h *ExecutionHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 	var exec models.Execution

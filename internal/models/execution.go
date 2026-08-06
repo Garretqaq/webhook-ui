@@ -13,3 +13,12 @@ type Execution struct {
 	StartedAt     time.Time  `json:"started_at"`
 	FinishedAt    *time.Time `json:"finished_at,omitempty"`
 }
+
+// ExecutionLogChunk is one slice of a running execution's output, in the order
+// it was read. Seq is unique per execution and never reused, so it stays a
+// valid cursor after older chunks are rolled off.
+type ExecutionLogChunk struct {
+	Seq    int64  `json:"seq"`
+	Stream string `json:"stream"`
+	Text   string `json:"text"`
+}

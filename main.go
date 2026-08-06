@@ -82,8 +82,8 @@ func main() {
 
 	authHandler := handlers.NewAuthHandler(cfg.AdminUsername, cfg.AdminPassword, loginGuard)
 	hookHandler := handlers.NewHookHandler()
-	executor := services.NewExecutor(cfg.AllowedCommands, cfg.DataDir)
-	webhookHandler := handlers.NewWebhookHandler(executor)
+	executor := services.NewExecutor(cfg.AllowedCommands, cfg.DataDir, cfg.LogTailBytes)
+	webhookHandler := handlers.NewWebhookHandler(executor, cfg.LogTailBytes)
 	executionHandler := handlers.NewExecutionHandler()
 	scriptHandler := handlers.NewScriptHandler(executor)
 	sshHostHandler := handlers.NewSSHHostHandler()
@@ -107,6 +107,7 @@ func main() {
 
 		auth.GET("/executions", executionHandler.List)
 		auth.GET("/executions/:id", executionHandler.Get)
+		auth.GET("/executions/:id/logs", executionHandler.Logs)
 
 		auth.GET("/scripts", scriptHandler.List)
 		auth.POST("/scripts", scriptHandler.Create)

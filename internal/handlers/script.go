@@ -190,7 +190,9 @@ func (h *ScriptHandler) Test(c *gin.Context) {
 		return
 	}
 
-	result := runScript(h.executor, req.Interpreter, req.Content, req.SSHHostID, req.Args, nil, "")
+	// No sink: a test run has no execution row, so its output is only
+	// aggregated onto the response.
+	result := runScript(h.executor, req.Interpreter, req.Content, req.SSHHostID, req.Args, nil, "", nil)
 	c.JSON(http.StatusOK, gin.H{
 		"success": result.Success,
 		"output":  result.Output,

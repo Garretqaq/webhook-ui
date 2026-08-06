@@ -17,11 +17,12 @@ import (
 )
 
 type WebhookHandler struct {
-	executor *services.Executor
+	executor     *services.Executor
+	logTailBytes int
 }
 
-func NewWebhookHandler(executor *services.Executor) *WebhookHandler {
-	return &WebhookHandler{executor: executor}
+func NewWebhookHandler(executor *services.Executor, logTailBytes int) *WebhookHandler {
+	return &WebhookHandler{executor: executor, logTailBytes: logTailBytes}
 }
 
 func (h *WebhookHandler) Trigger(c *gin.Context) {
@@ -79,7 +80,7 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 
 	execID := h.logExecutionStart(hookID, c.ClientIP(), execTarget(hook.SSHHostID))
 
-	result := h.execute(&hook, env, args)
+	result := h.execute(&hook, env, args, sinkFor(execID, h.logTailBytes))
 
 	status := "success"
 	if !result.Success {
@@ -102,9 +103,9 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 
 // execute runs the hook's bound script, or its free-form command, at the
 // execution location configured on the hook.
-func (h *WebhookHandler) execute(hook *models.Hook, env map[string]string, args []string) *services.ExecuteResult {
+func (h *WebhookHandler) execute(hook *models.Hook, env map[string]string, args []string, sink services.LogSink) *services.ExecuteResult {
 	if hook.ScriptID == "" {
-		return runCommand(h.executor, hook, args, env)
+		return runCommand(h.executor, hook, args, env, sink)
 	}
 
 	var script models.Script
@@ -117,7 +118,7 @@ func (h *WebhookHandler) execute(hook *models.Hook, env map[string]string, args 
 			Error:   fmt.Sprintf("script not found: %s", hook.ScriptID),
 		}
 	}
-	return runScript(h.executor, script.Interpreter, script.Content, hook.SSHHostID, args, env, hook.WorkingDir)
+	return runScript(h.executor, script.Interpreter, script.Content, hook.SSHHostID, args, env, hook.WorkingDir, sink)
 }
 
 func (h *WebhookHandler) buildCommandInput(hook *models.Hook, c *gin.Context, payload []byte) (map[string]string, []string) {

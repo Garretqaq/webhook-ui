@@ -1,10 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Drawer, Typography, Select, Space } from 'antd'
+import { Table, Tag, Button, Modal, Typography, Select, Space } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { executionApi, hookApi } from '../api/client'
 import type { Execution, Hook } from '../api/client'
+import ExecutionLogView from '../components/ExecutionLogView'
 
 const { Paragraph, Text } = Typography
+
+const statusColors: Record<string, string> = {
+  success: 'green',
+  failed: 'red',
+  running: 'blue',
+}
 
 export default function ExecutionLogs() {
   const [executions, setExecutions] = useState<Execution[]>([])
@@ -66,14 +73,7 @@ export default function ExecutionLogs() {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (status: string) => {
-        const colors: Record<string, string> = {
-          success: 'green',
-          failed: 'red',
-          running: 'blue',
-        }
-        return <Tag color={colors[status] || 'default'}>{status}</Tag>
-      },
+      render: (status: string) => <Tag color={statusColors[status] || 'default'}>{status}</Tag>,
     },
     {
       title: '执行位置',
@@ -144,12 +144,13 @@ export default function ExecutionLogs() {
         pagination={{ pageSize: 20 }}
       />
 
-      <Drawer
+      <Modal
         title="执行详情"
-        placement="right"
-        width={600}
+        width={760}
         open={detailVisible}
-        onClose={() => setDetailVisible(false)}
+        onCancel={() => setDetailVisible(false)}
+        footer={null}
+        destroyOnClose
       >
         {currentExecution && (
           <div>
@@ -159,7 +160,7 @@ export default function ExecutionLogs() {
             </Paragraph>
             <Paragraph>
               <Text strong>状态: </Text>
-              <Tag color={currentExecution.status === 'success' ? 'green' : 'red'}>
+              <Tag color={statusColors[currentExecution.status] || 'default'}>
                 {currentExecution.status}
               </Tag>
             </Paragraph>
@@ -184,33 +185,10 @@ export default function ExecutionLogs() {
             <Paragraph>
               <Text strong>输出: </Text>
             </Paragraph>
-            <pre style={{
-              background: '#f5f5f5',
-              padding: 12,
-              borderRadius: 4,
-              maxHeight: 300,
-              overflow: 'auto'
-            }}>
-              {currentExecution.output || '(无输出)'}
-            </pre>
-            {currentExecution.error && (
-              <>
-                <Paragraph>
-                  <Text strong type="danger">错误: </Text>
-                </Paragraph>
-                <pre style={{
-                  background: '#fff2f0',
-                  padding: 12,
-                  borderRadius: 4,
-                  color: '#ff4d4f'
-                }}>
-                  {currentExecution.error}
-                </pre>
-              </>
-            )}
+            <ExecutionLogView execution={currentExecution} />
           </div>
         )}
-      </Drawer>
+      </Modal>
     </div>
   )
 }

@@ -47,7 +47,7 @@ func newExecTestHandler(t *testing.T) *WebhookHandler {
 	if err != nil {
 		t.Skip("sh not available")
 	}
-	return NewWebhookHandler(services.NewExecutor([]string{shPath}, t.TempDir()))
+	return NewWebhookHandler(services.NewExecutor([]string{shPath}, t.TempDir(), 0), 0)
 }
 
 func TestExecuteScriptHookRunsLocallyWhenNoHost(t *testing.T) {
@@ -59,7 +59,7 @@ func TestExecuteScriptHookRunsLocallyWhenNoHost(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := h.execute(&models.Hook{ID: "h1", ScriptID: "s1"}, nil, nil)
+	result := h.execute(&models.Hook{ID: "h1", ScriptID: "s1"}, nil, nil, nil)
 	if !result.Success {
 		t.Fatalf("expected local success, got: %s", result.Error)
 	}
@@ -79,7 +79,7 @@ func TestExecuteCommandHookRunsLocallyWhenNoHost(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := h.execute(&models.Hook{ID: "h1", Command: "sh " + script}, nil, nil)
+	result := h.execute(&models.Hook{ID: "h1", Command: "sh " + script}, nil, nil, nil)
 	if !result.Success {
 		t.Fatalf("expected local success, got: %s", result.Error)
 	}
@@ -107,7 +107,7 @@ func TestExecuteRoutesToSSHWhenHookHasHost(t *testing.T) {
 	}
 	for name, hook := range cases {
 		t.Run(name, func(t *testing.T) {
-			result := h.execute(hook, nil, nil)
+			result := h.execute(hook, nil, nil, nil)
 			if result.Success {
 				t.Fatal("expected the SSH dial to fail, but execution succeeded — it ran locally")
 			}

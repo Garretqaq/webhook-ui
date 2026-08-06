@@ -42,6 +42,21 @@ export interface Execution {
   finished_at?: string
 }
 
+export interface ExecutionLogChunk {
+  seq: number
+  stream: 'stdout' | 'stderr'
+  text: string
+}
+
+export interface ExecutionLogs {
+  chunks: ExecutionLogChunk[]
+  next_seq: number
+  /** Lowest seq still stored. A cursor below it means chunks were rolled off. */
+  oldest_seq: number
+  status: string
+  finished: boolean
+}
+
 export interface Script {
   id: string
   name: string
@@ -96,6 +111,8 @@ export const executionApi = {
   list: (params?: { limit?: number; offset?: number; hook_id?: string }) =>
     client.get<Execution[]>('/executions', { params }),
   get: (id: number) => client.get<Execution>(`/executions/${id}`),
+  logs: (id: number, afterSeq: number) =>
+    client.get<ExecutionLogs>(`/executions/${id}/logs`, { params: { after_seq: afterSeq } }),
 }
 
 export const scriptApi = {

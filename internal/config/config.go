@@ -19,6 +19,10 @@ type Config struct {
 	LoginLockoutMinutes  int
 	LoginRateLimitPerMin int
 	AllowedCommands      []string
+	// LogTailBytes caps how much of one execution's output is retained, per
+	// stream for the aggregate and in total for the streamed log rows. The
+	// head is dropped, since the tail is what explains a failure.
+	LogTailBytes int
 }
 
 func Load() *Config {
@@ -32,6 +36,7 @@ func Load() *Config {
 		LoginLockoutMinutes:  getEnvInt("LOGIN_LOCKOUT_MINUTES", 15),
 		LoginRateLimitPerMin: getEnvInt("LOGIN_RATE_LIMIT_PER_MIN", 10),
 		AllowedCommands:      getEnvSlice("ALLOWED_COMMANDS", []string{"/usr/bin/git", "/usr/bin/curl", "/bin/bash", "/bin/sh", "/usr/bin/python3"}),
+		LogTailBytes:         getEnvInt("LOG_TAIL_BYTES", 5*1024*1024),
 	}
 
 	cfg.SessionSecret = os.Getenv("SESSION_SECRET")
