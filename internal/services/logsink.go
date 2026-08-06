@@ -36,6 +36,9 @@ type ExecOptions struct {
 	// Timeout bounds the execution; 0 means it may run indefinitely, which is
 	// the point of an asynchronous hook — nothing is holding a request open.
 	Timeout time.Duration
+	// Cancel aborts the execution when it closes. A nil channel never fires,
+	// so an execution nobody can reach is simply uncancellable.
+	Cancel <-chan struct{}
 }
 
 // streamCapture fans a process's two output streams into the per-stream

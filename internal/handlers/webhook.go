@@ -22,10 +22,16 @@ type WebhookHandler struct {
 	executor     *services.Executor
 	logTailBytes int
 	runner       *Runner
+	cancels      *CancelRegistry
 }
 
-func NewWebhookHandler(executor *services.Executor, logTailBytes int, runner *Runner) *WebhookHandler {
-	return &WebhookHandler{executor: executor, logTailBytes: logTailBytes, runner: runner}
+func NewWebhookHandler(executor *services.Executor, logTailBytes int, runner *Runner, cancels *CancelRegistry) *WebhookHandler {
+	return &WebhookHandler{
+		executor:     executor,
+		logTailBytes: logTailBytes,
+		runner:       runner,
+		cancels:      cancels,
+	}
 }
 
 func (h *WebhookHandler) Trigger(c *gin.Context) {
@@ -90,7 +96,7 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 
 	execID := h.logExecutionStart(hookID, c.ClientIP(), execTarget(hook.SSHHostID), models.StatusRunning)
 
-	result := h.execute(&hook, env, args, h.execOptions(&hook, execID))
+	result := h.execute(&hook, env, args, h.execOptions(&hook, execID, nil))
 
 	status := models.StatusSuccess
 	if !result.Success {
@@ -199,12 +205,14 @@ func (h *WebhookHandler) logExecution(hookID, source, status, output, errMsg str
 	`, hookID, source, status, output, errMsg, time.Now(), time.Now())
 }
 
-// execOptions renders the per-call settings for one execution of hook.
-func (h *WebhookHandler) execOptions(hook *models.Hook, execID int64) services.ExecOptions {
+// execOptions renders the per-call settings for one execution of hook. cancel
+// is nil for a synchronous run, which leaves it uncancellable by design.
+func (h *WebhookHandler) execOptions(hook *models.Hook, execID int64, cancel <-chan struct{}) services.ExecOptions {
 	return services.ExecOptions{
 		Sink:      sinkFor(execID, h.logTailBytes),
 		TailBytes: h.logTailBytes,
 		Timeout:   hook.Timeout(),
+		Cancel:    cancel,
 	}
 }
 
@@ -235,8 +243,11 @@ func (h *WebhookHandler) triggerAsync(c *gin.Context, hook *models.Hook, env map
 	}
 	slot.SetExecution(execID)
 
+	cancel := h.cancels.Register(execID)
+
 	go func() {
 		defer slot.Release()
+		defer h.cancels.Unregister(execID)
 		// The request has already been answered, so nothing is left to turn a
 		// panic into a response — and unlike the synchronous path there is no
 		// gin recovery middleware on this stack to stop it taking the process
@@ -252,10 +263,20 @@ func (h *WebhookHandler) triggerAsync(c *gin.Context, hook *models.Hook, env map
 		defer h.runner.Finish()
 
 		h.markRunning(execID)
-		result := h.execute(hook, env, args, h.execOptions(hook, execID))
+		opts := h.execOptions(hook, execID, cancel)
+		result := h.execute(hook, env, args, opts)
 
 		status := models.StatusSuccess
-		if !result.Success {
+		switch {
+		case result.Canceled:
+			status = models.StatusCanceled
+			// The log is the only place the two are told apart after the fact:
+			// a script that died on its own looks identical to one that was
+			// stopped, unless the stop leaves a mark of its own.
+			if opts.Sink != nil {
+				opts.Sink.WriteChunk(services.StreamStderr, "\n--- 已被手动中断 ---\n")
+			}
+		case !result.Success:
 			status = models.StatusFailed
 		}
 		h.logExecutionEnd(execID, status, result.Output, result.Error)

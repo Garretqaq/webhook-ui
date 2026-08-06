@@ -96,4 +96,5 @@ const (
 	StatusSuccess     = "success"
 	StatusFailed      = "failed"
 	StatusInterrupted = "interrupted"
+	StatusCanceled    = "canceled"
 )

@@ -65,6 +65,9 @@ type ExecuteResult struct {
 	Output  string
 	Error   string
 	Success bool
+	// Canceled distinguishes an operator stopping the run from the script
+	// failing on its own, which the execution log has to be able to show.
+	Canceled bool
 }
 
 func (e *Executor) Execute(hook *models.Hook, env map[string]string, args []string, opts ExecOptions) *ExecuteResult {
@@ -155,6 +158,7 @@ func applyEnv(cmd *exec.Cmd, env map[string]string) {
 // what lets a long execution be watched live instead of only after it ends.
 func (e *Executor) run(cmd *exec.Cmd, opts ExecOptions) *ExecuteResult {
 	capture := newStreamCapture(opts)
+	setProcessGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -194,22 +198,29 @@ func (e *Executor) run(cmd *exec.Cmd, opts ExecOptions) *ExecuteResult {
 		}
 		return result
 	case <-timeoutChan(opts.Timeout):
-		// Kill only reaches the direct child. Anything it spawned inherits the
-		// pipes and can hold them open long past the kill, so `done` — which
-		// waits for both readers to see EOF — is not something the timeout can
-		// afford to block on, or the timeout would not bound anything. Killing
-		// the whole process group is what actually reaps the descendants.
-		cmd.Process.Kill()
+		return e.abort(cmd, capture, timeoutMessage(opts.Timeout), false)
+	case <-opts.Cancel:
+		return e.abort(cmd, capture, "execution canceled", true)
+	}
+}
 
-		// capture is mutex-guarded, so snapshotting it while the orphaned
-		// readers may still be writing is safe; they exit on their own once
-		// the last descendant closes the pipes.
-		out, errOut := capture.result()
-		return &ExecuteResult{
-			Success: false,
-			Output:  out,
-			Error:   strings.TrimLeft(errOut+"\n"+timeoutMessage(opts.Timeout), "\n"),
-		}
+// abort kills the process group and returns whatever it produced first.
+//
+// It does not wait for the readers. They only see EOF once every descendant
+// has closed the pipes, and a descendant that ignores the signal would
+// otherwise keep a timeout or a cancellation pending indefinitely — which is
+// exactly what neither is allowed to do. capture is mutex-guarded, so reading
+// it while the orphaned readers may still be writing is safe; they exit on
+// their own.
+func (e *Executor) abort(cmd *exec.Cmd, capture *streamCapture, reason string, canceled bool) *ExecuteResult {
+	killProcessTree(cmd)
+
+	out, errOut := capture.result()
+	return &ExecuteResult{
+		Success:  false,
+		Canceled: canceled,
+		Output:   out,
+		Error:    strings.TrimLeft(errOut+"\n"+reason, "\n"),
 	}
 }
 

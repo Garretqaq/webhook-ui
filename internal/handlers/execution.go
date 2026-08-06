@@ -11,10 +11,12 @@ import (
 	"github.com/songguangzhi/webhook-ui/internal/models"
 )
 
-type ExecutionHandler struct{}
+type ExecutionHandler struct {
+	cancels *CancelRegistry
+}
 
-func NewExecutionHandler() *ExecutionHandler {
-	return &ExecutionHandler{}
+func NewExecutionHandler(cancels *CancelRegistry) *ExecutionHandler {
+	return &ExecutionHandler{cancels: cancels}
 }
 
 func (h *ExecutionHandler) List(c *gin.Context) {
@@ -180,4 +182,45 @@ func SweepInterruptedExecutions() (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+// Cancel stops an execution that is still in flight.
+//
+// Only asynchronous executions can be reached: a synchronous one is bounded by
+// its timeout and has a request waiting on it. What "stopped" means depends on
+// where the hook runs — locally the whole process group is signalled, but a
+// remote process that already detached from its SSH session survives, and the
+// execution merely stops being tracked.
+func (h *ExecutionHandler) Cancel(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid execution id"})
+		return
+	}
+
+	var status string
+	err = database.DB.QueryRow("SELECT status FROM executions WHERE id = ?", id).Scan(&status)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "execution not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !h.cancels.Cancel(id) {
+		// Either it has already finished, or it belongs to a synchronous hook,
+		// or a restart left the row behind — the registry cannot tell which, so
+		// report the state the client can actually see.
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "execution is not running and cannot be canceled",
+			"status": status,
+		})
+		return
+	}
+
+	// The executing goroutine writes the final status; answering before it does
+	// keeps the request from waiting on a process that may take a moment to die.
+	c.JSON(http.StatusAccepted, gin.H{"message": "cancellation requested"})
 }

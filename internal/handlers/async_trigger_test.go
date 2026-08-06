@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,7 +59,7 @@ func asyncTestHandler(t *testing.T, runner *Runner) *WebhookHandler {
 	// the package-level database handle, so a test that returns while its own
 	// executions are still writing would corrupt the next one.
 	t.Cleanup(runner.WaitIdle)
-	return NewWebhookHandler(services.NewExecutor([]string{shPath}, t.TempDir()), 0, runner)
+	return NewWebhookHandler(services.NewExecutor([]string{shPath}, t.TempDir()), 0, runner, NewCancelRegistry())
 }
 
 func executionStatus(t *testing.T, execID int64) string {
@@ -191,12 +193,12 @@ func TestAsyncHookWithNoTimeoutOutlivesTheOldFiveMinuteBound(t *testing.T) {
 	// actually waiting, which no test can afford.
 	hook := &models.Hook{ID: "h", Async: true, TimeoutSeconds: 0}
 	h := &WebhookHandler{}
-	if got := h.execOptions(hook, 1).Timeout; got != 0 {
+	if got := h.execOptions(hook, 1, nil).Timeout; got != 0 {
 		t.Errorf("Timeout = %s, want 0 (no limit)", got)
 	}
 
 	bounded := &models.Hook{ID: "h", Async: true, TimeoutSeconds: 7200}
-	if got := h.execOptions(bounded, 1).Timeout; got != 2*time.Hour {
+	if got := h.execOptions(bounded, 1, nil).Timeout; got != 2*time.Hour {
 		t.Errorf("Timeout = %s, want 2h", got)
 	}
 }
@@ -305,5 +307,108 @@ func TestAsyncExecutionPanicDoesNotTakeTheProcessDown(t *testing.T) {
 		t.Errorf("the slot was not released after the panic: %v", err)
 	} else {
 		readmitted.Release()
+	}
+}
+
+func cancelExecution(t *testing.T, h *ExecutionHandler, execID int64) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/executions/:id/cancel", h.Cancel)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost,
+		"/executions/"+strconv.FormatInt(execID, 10)+"/cancel", nil))
+
+	body := map[string]any{}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	return w, body
+}
+
+func TestCancelStopsARunningAsyncExecution(t *testing.T) {
+	setupExecDB(t)
+	asyncHook(t, "h-cancel", "sleep 30", 0)
+	cancels := NewCancelRegistry()
+	runner := NewRunner(4, 16)
+	t.Cleanup(runner.WaitIdle)
+
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	h := NewWebhookHandler(services.NewExecutor([]string{shPath}, t.TempDir()), 1024, runner, cancels)
+
+	_, body := triggerHook(t, h, "h-cancel")
+	execID := int64(body["execution_id"].(float64))
+	waitForStatus(t, execID, models.StatusRunning)
+
+	w, _ := cancelExecution(t, NewExecutionHandler(cancels), execID)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body %s", w.Code, w.Body.String())
+	}
+
+	waitForStatus(t, execID, models.StatusCanceled)
+
+	// The log has to say it was stopped, or after the fact a cancellation is
+	// indistinguishable from the script dying on its own.
+	var logged string
+	rows, err := database.DB.Query(
+		"SELECT chunk FROM execution_logs WHERE execution_id = ? ORDER BY seq", execID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var chunk string
+		rows.Scan(&chunk)
+		logged += chunk
+	}
+	if !strings.Contains(logged, "中断") {
+		t.Errorf("the log carries no cancellation marker: %q", logged)
+	}
+}
+
+func TestCancelIsRefusedForAnExecutionThatIsNotRunning(t *testing.T) {
+	setupExecDB(t)
+	execID := startedExecution(t)
+	if _, err := database.DB.Exec(
+		"UPDATE executions SET status='success', finished_at=CURRENT_TIMESTAMP WHERE id=?", execID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	w, body := cancelExecution(t, NewExecutionHandler(NewCancelRegistry()), execID)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", w.Code)
+	}
+	if body["status"] != models.StatusSuccess {
+		t.Errorf("the refusal should report the state the client can see, got %v", body["status"])
+	}
+}
+
+func TestCancelUnknownExecutionIs404(t *testing.T) {
+	setupExecDB(t)
+	w, _ := cancelExecution(t, NewExecutionHandler(NewCancelRegistry()), 4242)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestSyncExecutionIsNotCancellable(t *testing.T) {
+	// Sync executions never register, so the endpoint has nothing to signal —
+	// which is the intended design, not an oversight.
+	cancels := NewCancelRegistry()
+	if cancels.Cancel(1) {
+		t.Error("an unregistered execution must not report as cancelled")
+	}
+
+	// And a second cancel of the same execution is refused rather than closing
+	// an already-closed channel.
+	cancels.Register(2)
+	if !cancels.Cancel(2) {
+		t.Fatal("the first cancel should succeed")
+	}
+	if cancels.Cancel(2) {
+		t.Error("the second cancel must be refused, not panic on a closed channel")
 	}
 }

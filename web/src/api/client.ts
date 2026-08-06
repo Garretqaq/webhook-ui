@@ -118,6 +118,7 @@ export const executionApi = {
   get: (id: number) => client.get<Execution>(`/executions/${id}`),
   logs: (id: number, afterSeq: number) =>
     client.get<ExecutionLogs>(`/executions/${id}/logs`, { params: { after_seq: afterSeq } }),
+  cancel: (id: number) => client.post(`/executions/${id}/cancel`),
 }
 
 export const scriptApi = {

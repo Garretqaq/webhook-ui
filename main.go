@@ -90,8 +90,9 @@ func main() {
 	}
 
 	runner := handlers.NewRunner(cfg.MaxConcurrentExecutions, cfg.MaxQueuedExecutions)
-	webhookHandler := handlers.NewWebhookHandler(executor, cfg.LogTailBytes, runner)
-	executionHandler := handlers.NewExecutionHandler()
+	cancels := handlers.NewCancelRegistry()
+	webhookHandler := handlers.NewWebhookHandler(executor, cfg.LogTailBytes, runner, cancels)
+	executionHandler := handlers.NewExecutionHandler(cancels)
 	scriptHandler := handlers.NewScriptHandler(executor, cfg.LogTailBytes)
 	sshHostHandler := handlers.NewSSHHostHandler()
 
@@ -115,6 +116,7 @@ func main() {
 		auth.GET("/executions", executionHandler.List)
 		auth.GET("/executions/:id", executionHandler.Get)
 		auth.GET("/executions/:id/logs", executionHandler.Logs)
+		auth.POST("/executions/:id/cancel", executionHandler.Cancel)
 
 		auth.GET("/scripts", scriptHandler.List)
 		auth.POST("/scripts", scriptHandler.Create)

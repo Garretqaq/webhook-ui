@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Modal, Typography, Select, Space } from 'antd'
+import { Table, Tag, Button, Modal, Typography, Select, Space, Popconfirm, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { executionApi, hookApi } from '../api/client'
 import type { Execution, Hook } from '../api/client'
@@ -13,7 +13,11 @@ const statusColors: Record<string, string> = {
   running: 'blue',
   queued: 'gold',
   interrupted: 'orange',
+  canceled: 'default',
 }
+
+// Only these can still be stopped; everything else has already finished.
+const cancellable = (status: string) => status === 'running' || status === 'queued'
 
 export default function ExecutionLogs() {
   const [executions, setExecutions] = useState<Execution[]>([])
@@ -52,6 +56,27 @@ export default function ExecutionLogs() {
     setCurrentExecution(record)
     setDetailVisible(true)
   }
+
+  const cancelExecution = async (id: number) => {
+    try {
+      await executionApi.cancel(id)
+      message.success('已请求中断')
+      loadData()
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '中断失败')
+    }
+  }
+
+  const cancelButton = (record: Execution, extra?: object) =>
+    cancellable(record.status) ? (
+      <Popconfirm
+        title="确定中断这次执行?"
+        description="本地执行会连同子进程一起终止；已脱离 SSH 会话的远端进程无法中断"
+        onConfirm={() => cancelExecution(record.id)}
+      >
+        <Button danger size="small" {...extra}>中断</Button>
+      </Popconfirm>
+    ) : null
 
   const columns = [
     {
@@ -113,9 +138,12 @@ export default function ExecutionLogs() {
       title: '操作',
       key: 'action',
       render: (_: any, record: Execution) => (
-        <Button type="link" onClick={() => showDetail(record)}>
-          详情
-        </Button>
+        <Space>
+          <Button type="link" onClick={() => showDetail(record)}>
+            详情
+          </Button>
+          {cancelButton(record)}
+        </Space>
       ),
     },
   ]
@@ -186,6 +214,7 @@ export default function ExecutionLogs() {
             )}
             <Paragraph>
               <Text strong>输出: </Text>
+              <span style={{ float: 'right' }}>{cancelButton(currentExecution)}</span>
             </Paragraph>
             <ExecutionLogView execution={currentExecution} />
           </div>

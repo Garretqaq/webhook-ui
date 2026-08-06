@@ -204,16 +204,28 @@ func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader, opts E
 		}
 		return result
 	case <-timeoutChan(opts.Timeout):
-		// Close only sends a channel-close message; the readers unblock when the
-		// remote answers it, so a wedged host would keep `done` pending forever.
-		// The timeout has to return regardless, exactly as the local branch does.
-		session.Close()
-		stdoutText, stderrText := streams.result()
-		return &ExecuteResult{
-			Success: false,
-			Output:  stdoutText,
-			Error:   strings.TrimLeft(stderrText+"\n"+timeoutMessage(opts.Timeout), "\n"),
-		}
+		return abortSSH(session, streams, timeoutMessage(opts.Timeout), false)
+	case <-opts.Cancel:
+		return abortSSH(session, streams, "execution canceled", true)
+	}
+}
+
+// abortSSH ends the session and returns what the remote host produced first.
+//
+// Close only sends a channel-close message; the readers unblock when the
+// remote answers it, so waiting for them would leave a wedged host able to
+// hold a timeout or a cancellation pending forever. Note what this cannot do:
+// a remote process that has already detached from the session — a Windows
+// fire-and-forget launcher, say — keeps running, and only stops being tracked.
+func abortSSH(session *ssh.Session, streams *streamCapture, reason string, canceled bool) *ExecuteResult {
+	session.Close()
+
+	stdoutText, stderrText := streams.result()
+	return &ExecuteResult{
+		Success:  false,
+		Canceled: canceled,
+		Output:   stdoutText,
+		Error:    strings.TrimLeft(stderrText+"\n"+reason, "\n"),
 	}
 }
 

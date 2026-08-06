@@ -144,7 +144,7 @@ func fetchLogs(t *testing.T, execID int64, query string) (*httptest.ResponseReco
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/executions/:id/logs", NewExecutionHandler().Logs)
+	r.GET("/executions/:id/logs", NewExecutionHandler(NewCancelRegistry()).Logs)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/executions/"+strconv.FormatInt(execID, 10)+"/logs"+query, nil)
