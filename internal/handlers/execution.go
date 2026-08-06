@@ -224,3 +224,24 @@ func (h *ExecutionHandler) Cancel(c *gin.Context) {
 	// keeps the request from waiting on a process that may take a moment to die.
 	c.JSON(http.StatusAccepted, gin.H{"message": "cancellation requested"})
 }
+
+// settingKeyAPIToken is the settings row that holds the external access token.
+const settingKeyAPIToken = "api_token"
+
+// getSetting returns the value for key, or empty when unset.
+func getSetting(key string) (string, error) {
+	var value string
+	err := database.DB.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return value, err
+}
+
+func setSetting(key, value string) error {
+	_, err := database.DB.Exec(`
+		INSERT INTO settings (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, key, value)
+	return err
+}

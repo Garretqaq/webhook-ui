@@ -8,6 +8,7 @@ import {
   FileTextOutlined,
   LogoutOutlined,
   QuestionCircleOutlined,
+  SettingOutlined,
 } from '@ant-design/icons'
 import { authApi } from './api/client'
 import Login from './pages/Login'
@@ -19,6 +20,7 @@ import SSHHostList from './pages/SSHHostList'
 import SSHHostEdit from './pages/SSHHostEdit'
 import ExecutionLogs from './pages/ExecutionLogs'
 import UsageGuide from './pages/UsageGuide'
+import Settings from './pages/Settings'
 
 const { Header, Content, Sider } = Layout
 
@@ -56,6 +58,11 @@ function AppLayout({ children, onLogout }: { children: React.ReactNode; onLogout
       key: '/guide',
       icon: <QuestionCircleOutlined />,
       label: '使用说明',
+    },
+    {
+      key: '/settings',
+      icon: <SettingOutlined />,
+      label: '设置',
     },
   ]
 
@@ -222,6 +229,18 @@ function App() {
             authenticated ? (
               <AppLayout onLogout={handleLogout}>
                 <UsageGuide />
+              </AppLayout>
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            authenticated ? (
+              <AppLayout onLogout={handleLogout}>
+                <Settings />
               </AppLayout>
             ) : (
               <Navigate to="/login" />

@@ -2,7 +2,7 @@ package database
 
 import "fmt"
 
-const schemaVersion = 10
+const schemaVersion = 11
 
 func Migrate() error {
 	return migrateTo(schemaVersion)
@@ -112,6 +112,12 @@ func migrateTo(target int) error {
 			// 300 rather than 0 so existing hooks keep the timeout they have
 			// always had; 0 is reserved to mean "no limit".
 			`ALTER TABLE hooks ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 300`,
+		},
+		{ // 10 -> 11: a single key-value store for instance-wide settings
+			`CREATE TABLE IF NOT EXISTS settings (
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL DEFAULT ''
+			)`,
 		},
 	}
 

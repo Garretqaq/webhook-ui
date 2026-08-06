@@ -140,4 +140,13 @@ export const sshHostApi = {
   test: (host: Partial<SSHHost>) => client.post<SSHHostTestResult>('/ssh-hosts/test', host),
 }
 
+
+
+export const settingsApi = {
+  getAPIToken: () => client.get<{ configured: boolean; token: string }>('/settings/api-token'),
+  regenerateAPIToken: () =>
+    client.post<{ configured: boolean; token: string }>('/settings/api-token/regenerate'),
+  disableAPIToken: () => client.delete('/settings/api-token'),
+}
+
 export default client

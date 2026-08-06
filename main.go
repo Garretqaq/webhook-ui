@@ -95,12 +95,23 @@ func main() {
 	executionHandler := handlers.NewExecutionHandler(cancels)
 	scriptHandler := handlers.NewScriptHandler(executor, cfg.LogTailBytes)
 	sshHostHandler := handlers.NewSSHHostHandler()
+	settingsHandler := handlers.NewSettingsHandler()
 
 	r.POST("/api/auth/login", middleware.LoginRateLimit(loginLimiter), authHandler.Login)
 	r.GET("/api/auth/check", authHandler.Check)
 
 	r.POST("/hooks/:id", webhookHandler.Trigger)
 	r.GET("/hooks/:id", webhookHandler.Trigger)
+
+	// Read-only access for external callers, on a separate path prefix rather
+	// than the /api group: gin refuses two groups that resolve to the same
+	// path, and a distinct prefix also makes it impossible to widen a token's
+	// reach by adding a route to the session group later.
+	ext := r.Group("/api/external")
+	ext.Use(middleware.APITokenRequired(handlers.APIToken))
+	ext.GET("/executions", executionHandler.List)
+	ext.GET("/executions/:id", executionHandler.Get)
+	ext.GET("/executions/:id/logs", executionHandler.Logs)
 
 	auth := r.Group("/api")
 	auth.Use(middleware.AuthRequired())
@@ -131,6 +142,10 @@ func main() {
 		auth.PUT("/ssh-hosts/:id", sshHostHandler.Update)
 		auth.DELETE("/ssh-hosts/:id", sshHostHandler.Delete)
 		auth.POST("/ssh-hosts/test", sshHostHandler.Test)
+
+		auth.GET("/settings/api-token", settingsHandler.GetAPIToken)
+		auth.POST("/settings/api-token/regenerate", settingsHandler.RegenerateAPIToken)
+		auth.DELETE("/settings/api-token", settingsHandler.DisableAPIToken)
 	}
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
