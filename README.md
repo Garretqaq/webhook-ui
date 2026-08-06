@@ -20,7 +20,7 @@
 - **一键自托管**：单二进制 + 前端 `go:embed` 打包，零外部依赖（SQLite 内建），克隆即用。
 - **Web 控制台**：可视化维护 Hook、脚本、SSH 主机，看执行日志，不用碰服务器文件。
 - **异步执行**：长任务立即返回 202 + execution_id，不再被固定超时砍断；日志实时滚动、可中断。
-- **脚本管理**：脚本存数据库，只管内容，支持 `bash`/`sh`/`python3`，页内试运行当前内容（无需保存）。
+- **脚本管理**：脚本存数据库，只管内容，支持 `bash`/`sh`/`python3`/`powershell`，页内试运行当前内容（无需保存）。
 - **执行位置在 Hook 上**：同一个脚本可被不同 Hook 派到本地或不同 SSH 主机执行。
 - **SSH 远程执行**：脚本通过 stdin 在远端跑，不落盘；Host Key 采用 TOFU 校验防劫持。
 - **多种触发校验**：固定 Token 或 HMAC 签名（SHA1/SHA256/SHA512），原生兼容 GitHub / GitLab。
@@ -136,13 +136,43 @@ GitHub Push 事件 → Hook 自动校验 `X-Hub-Signature-256`（HMAC SHA256）�
 
 ### SSH 远程执行
 
-Hook 的「执行位置」选 SSH 主机即可远端执行：绑定脚本时内容通过 stdin 远端执行（`bash -s`），不写远端磁盘；自由命令则直接在远端跑。填了「工作目录」会先 `cd` 进去，目录不存在则执行失败。SSH 主机页可「测试连接」验证凭据。
+Hook 的「执行位置」选 SSH 主机即可远端执行：绑定脚本时内容通过 stdin 远端执行（Linux 走 `bash -s` / `sh -s` / `python3 -`，Windows 走 `powershell -Command -`），不写远端磁盘；自由命令则直接在远端跑。填了「工作目录」会先 `cd` 进去（Windows 为 `Set-Location`），目录不存在则执行失败。SSH 主机页可「测试连接」验证凭据。
 
 执行位置属于 Hook 而不是脚本，所以同一个部署脚本可以由 staging Hook 打到测试机、production Hook 打到生产机。执行日志会记录当次实际执行位置的快照。
 
 > ⚠️ **SSH 执行不受 `ALLOWED_COMMANDS` 白名单限制**——白名单描述的是本机可执行文件路径，对远端主机无意义。能编辑 Hook 的管理员即可在远端主机上执行任意命令。
 
 > **公网环境建议**：先用 `ssh-keyscan <host>` 取公钥并手动预填，避免首次连接被中间人截获。
+
+### Windows / PowerShell 脚本
+
+解释器选 `powershell` 的脚本，内容通过 stdin 交给远端的 `powershell -Command -` 执行。
+
+> ⚠️ **调用外部程序（npm / git / python 等）必须走管道**，否则既看不到输出，脚本也会从调用那行起悄悄断掉。
+
+```powershell
+& <命令> <参数> 2>&1 | Out-Host
+$code = $LASTEXITCODE
+if ($code -ne 0) { exit $code }
+```
+
+三件套各自的作用：
+
+| 写法 | 作用 |
+| --- | --- |
+| `2>&1` | 把外部程序的 stderr 并进 stdout，报错不丢 |
+| `\| Out-Host` | 关键的一步：PowerShell 只有在外部程序处于管道中时才会接管它的三个流 |
+| `exit $code` | 把外部程序的退出码交回 Hook，决定本次执行成功还是失败 |
+
+**为什么不管道化就断？** `-Command -` 模式下 PowerShell 是一行一行从 stdin 读脚本的。裸调 `& npm run start` 时，子进程继承了同一个 stdin 管道，会把后面还没读到的脚本文本一起吃掉——于是 `$LASTEXITCODE` 那几行根本没机会执行，`$code` 自然是空的；同时它的 stdout 是直接继承的句柄，PowerShell 不经手，输出也就无从转发。放进管道后，PowerShell 给子进程换上自己控制的空 stdin（偷不走了）并读回 stdout（看得见了），一次解决两个症状。
+
+其余注意事项：
+
+- **工作目录填在 Hook 上**，不要在脚本里写 `Set-Location`——Hook 的「工作目录」字段会自动生成一条 `Set-Location`，目录不存在直接判失败。
+- **别在这类脚本里设 `$ErrorActionPreference = 'Stop'`**。`2>&1` 会把外部程序的 stderr 包装成 ErrorRecord，程序往 stderr 写一行普通日志就会把整个执行炸掉。
+- **`param()` 块无效**，webhook 传入的参数用 `$args[0]`、`$args[1]`，环境变量用 `$env:PAYLOAD` 等。
+
+**长跑进程**（`npm run start`、`docker compose up` 这类不会自己退出的命令）：Hook 必须勾选「异步执行」并把超时设成足够大的值（不限则填 `0`）。同步 Hook 默认 5 分钟就会被砍断，且不允许把超时设为 `0`。
 
 ## 📁 项目结构
 

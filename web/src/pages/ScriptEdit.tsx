@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Form, Input, Select, Button, Card, message, Space, Tag, Radio } from 'antd'
+import { Form, Input, Select, Button, Card, message, Space, Tag, Radio, Alert } from 'antd'
 import { PlayCircleOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import { scriptApi, sshHostApi } from '../api/client'
@@ -15,6 +15,7 @@ export default function ScriptEdit() {
   const [isNew, setIsNew] = useState(true)
   const [sshHosts, setSSHHosts] = useState<SSHHost[]>([])
   const testLocation = Form.useWatch('test_exec_location', form)
+  const interpreter = Form.useWatch('interpreter', form)
   const navigate = useNavigate()
   const { id } = useParams()
 
@@ -109,6 +110,32 @@ export default function ScriptEdit() {
             <Select.Option value="powershell">powershell (Windows)</Select.Option>
           </Select>
         </Form.Item>
+
+        {interpreter === 'powershell' && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 24 }}
+            message="调用外部程序必须走管道"
+            description={
+              <>
+                <div>
+                  脚本通过 stdin 交给远端 <code>powershell -Command -</code> 执行。裸调 <code>&amp; npm run start</code> 会被子进程抢走 stdin，
+                  输出看不见，后续语句也不会执行。固定写法：
+                </div>
+                <pre style={{ fontFamily: 'monospace', margin: '8px 0 0' }}>
+{`& <命令> <参数> 2>&1 | Out-Host
+$code = $LASTEXITCODE
+if ($code -ne 0) { exit $code }`}
+                </pre>
+                <div style={{ marginTop: 8 }}>
+                  工作目录填在 Hook 上，不要自己写 <code>Set-Location</code>；不要设 <code>$ErrorActionPreference = 'Stop'</code>
+                  （<code>2&gt;&amp;1</code> 会把 stderr 变成 ErrorRecord 炸掉执行）；不会自己退出的进程要在 Hook 上勾选「异步执行」并调大超时。
+                </div>
+              </>
+            }
+          />
+        )}
 
         <Form.Item name="description" label="描述">
           <Input placeholder="脚本用途说明 (可选)" />
