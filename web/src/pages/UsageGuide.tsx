@@ -1,4 +1,4 @@
-import { Card, Typography, Table, Tag } from 'antd'
+import { Card, Typography, Table, Tag, Tabs } from 'antd'
 
 const { Title, Paragraph, Text } = Typography
 
@@ -14,10 +14,8 @@ const hmacHeaders = [
   { key: '3', header: 'X-Gitlab-Token', format: '<token>', remark: '明文 token 直接比对' },
 ]
 
-export default function UsageGuide() {
-  return (
-    <div style={{ maxWidth: 900 }}>
-      <Card>
+const guideContent = (
+  <>
         <Typography>
           <Title level={3}>字段使用说明</Title>
 
@@ -155,6 +153,102 @@ echo "完整body: $PAYLOAD"              # pass_payload_to 选 env/both`}</pre>
             每次触发（含验签失败）都会记录到"执行日志"菜单，可查看命令 stdout/stderr 和耗时。
           </Paragraph>
         </Typography>
+  </>
+)
+
+const apiContent = (
+  <>
+        <Typography>
+          <Title level={3}>API 接口</Title>
+          <Paragraph>
+            面向外部系统（CI、监控等）。无需登录，凭 <Text code>X-API-Token</Text> 请求头访问，
+            作用域仅限只读执行记录与日志。
+          </Paragraph>
+
+          <Title level={4}>获取 Token</Title>
+          <Paragraph>
+            在「设置」页生成。重新生成会使旧 token 立即失效，外部调用全部中断。
+            通过请求头传递：<Text code>X-API-Token: &lt;token&gt;</Text>。
+            未配置时外部访问一律 403。
+          </Paragraph>
+
+          <Title level={4}>查询执行记录</Title>
+          <Paragraph code copyable>
+            GET /api/external/executions
+          </Paragraph>
+          <Paragraph>
+            支持 <Text code>limit</Text>、<Text code>offset</Text>、<Text code>hook_id</Text> 过滤。
+            单条：<Text code>GET /api/external/executions/&lt;id&gt;</Text>。
+          </Paragraph>
+
+          <Title level={4}>轮询日志</Title>
+          <Paragraph code copyable>
+            GET /api/external/executions/&lt;id&gt;/logs?after_seq=0
+          </Paragraph>
+          <Paragraph>
+            用响应里的 <Text code>next_seq</Text> 作为下一轮的 <Text code>after_seq</Text> 继续拉。
+            响应字段：
+          </Paragraph>
+          <ul>
+            <li><Text code>chunks</Text> — 增量日志块，每块带 <Text code>seq</Text> 与 <Text code>stream</Text>（stdout/stderr）</li>
+            <li><Text code>next_seq</Text> — 下次轮询的起点</li>
+            <li><Text code>oldest_seq</Text> — 当前仍在的最老序号。日志按尾部保留，旧块会滚删；若你的游标小于它，说明中间丢了一段</li>
+            <li><Text code>has_more</Text> — 还有积压未拉完，立即续拉（单次响应封顶 500 块）</li>
+            <li><Text code>status</Text> / <Text code>finished</Text> — 执行状态与是否结束</li>
+          </ul>
+          <Paragraph>
+            轮询策略：执行中每 2 秒拉一次；<Text code>has_more</Text> 为真时不停顿续拉；
+            <Text code>finished</Text> 为真且无积压后停止。
+          </Paragraph>
+
+          <Title level={4}>异步触发</Title>
+          <Paragraph>
+            Hook 勾选「异步执行」后，触发接口立即返回 <Text code>202</Text>，
+            body 带 <Text code>execution_id</Text> 与 <Text code>status</Text>（<Text code>queued</Text>），
+            不等脚本跑完。同步 Hook 仍返回 <Text code>200</Text> 并在 body 里带完整输出——两种模式从状态码即可区分。
+          </Paragraph>
+          <Paragraph>
+            同一异步 Hook 上一次未结束时再次触发，返回 <Text code>409</Text>，
+            body 带 <Text code>running_execution_id</Text> 指向正在跑的那次。并发槽与队列均满时返回 <Text code>429</Text>。
+          </Paragraph>
+
+          <Title level={4}>执行状态机</Title>
+          <Paragraph>
+            <Text code>queued</Text>（排队中）→ <Text code>running</Text>（运行中）→ 终态：
+          </Paragraph>
+          <ul>
+            <li><Text code>success</Text> — 正常跑完</li>
+            <li><Text code>failed</Text> — 脚本非零退出、超时或执行器错误</li>
+            <li><Text code>canceled</Text> — 被手动中断</li>
+            <li><Text code>interrupted</Text> — 服务重启，本服务不再跟踪它（远端进程可能仍在运行）</li>
+          </ul>
+          <Paragraph>
+            <Text code>canceled</Text> 与 <Text code>interrupted</Text> 都只代表「本服务不再跟踪」，
+            不保证远端进程已终止。中断接口（<Text code>POST /api/executions/&lt;id&gt;/cancel</Text>）
+            仅登录会话可用，API token 调不了。
+          </Paragraph>
+
+          <Title level={4}>已知边界</Title>
+          <ul>
+            <li>已脱离 SSH 会话的远端进程（例如 Windows 上用 Start-Process 启动的看门狗）中断不到</li>
+            <li>stdout/stderr 的交错顺序只保证「读到的顺序」，极近的两行可能因缓冲有轻微不确定性</li>
+            <li>执行记录按 <Text code>RETENTION_DAYS</Text>（默认 30 天）保留，过期连同日志删除</li>
+          </ul>
+        </Typography>
+  </>
+)
+
+export default function UsageGuide() {
+  return (
+    <div style={{ maxWidth: 900 }}>
+      <Card>
+        <Tabs
+          defaultActiveKey="guide"
+          items={[
+            { key: 'guide', label: '字段说明', children: guideContent },
+            { key: 'api', label: 'API 接口', children: apiContent },
+          ]}
+        />
       </Card>
     </div>
   )

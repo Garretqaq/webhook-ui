@@ -19,6 +19,7 @@
 
 - **一键自托管**：单二进制 + 前端 `go:embed` 打包，零外部依赖（SQLite 内建），克隆即用。
 - **Web 控制台**：可视化维护 Hook、脚本、SSH 主机，看执行日志，不用碰服务器文件。
+- **异步执行**：长任务立即返回 202 + execution_id，不再被固定超时砍断；日志实时滚动、可中断。
 - **脚本管理**：脚本存数据库，只管内容，支持 `bash`/`sh`/`python3`，页内试运行当前内容（无需保存）。
 - **执行位置在 Hook 上**：同一个脚本可被不同 Hook 派到本地或不同 SSH 主机执行。
 - **SSH 远程执行**：脚本通过 stdin 在远端跑，不落盘；Host Key 采用 TOFU 校验防劫持。
@@ -97,6 +98,10 @@ curl -X POST http://localhost:9000/hooks/<hook-id> \
 | `LOGIN_LOCKOUT_MINUTES` | 登录锁定时长（分钟） | `15` |
 | `LOGIN_RATE_LIMIT_PER_MIN` | 每 IP 每分钟登录尝试上限 | `10` |
 | `ALLOWED_COMMANDS` | 允许的命令前缀，逗号分隔 | `/usr/bin/git,/usr/bin/curl,/bin/bash,/bin/sh,/usr/bin/python3` |
+| `LOG_TAIL_BYTES` | 单次执行日志按尾部保留的上限（字节），超出滚删旧块 | `5242880`（5MB） |
+| `MAX_CONCURRENT_EXECUTIONS` | 异步 Hook 同时运行上限 | `10` |
+| `MAX_QUEUED_EXECUTIONS` | 超出并发后允许排队的数量，再满返回 429 | `100` |
+| `RETENTION_DAYS` | 执行记录与日志保留天数，0 表示不清理 | `30` |
 
 > **登录防爆破**：同一用户名+IP 连续失败锁定（默认 5 次锁 15 分钟，返回 429）；`/api/login` 每 IP 每分钟最多 10 次。锁定状态存内存，重启清零。
 >
@@ -178,6 +183,8 @@ webhook-ui/
 POST /hooks/:id          # 也支持 GET（见 0.2.0+）
 ```
 
+**响应契约**：同步 Hook 返回 `200`，body 带完整 `output`；异步 Hook（Hook 上勾选「异步执行」）返回 `202`，body 带 `execution_id` 与 `status: queued`，随后凭 id 轮询日志。同一异步 Hook 上次未结束时再次触发返回 `409`（body 带 `running_execution_id`）；并发与队列均满返回 `429`。
+
 访问校验二选一或同用：
 
 - **固定 Token**：配置 Token 后，请求带 `X-Token` header 或 `?token=`，值相等才执行。适合不能算 HMAC 的调用方。
@@ -193,11 +200,25 @@ POST /hooks/:id          # 也支持 GET（见 0.2.0+）
 | `POST` | `/api/auth/login` · `/api/auth/logout` | 登录 / 登出 |
 | `GET/POST` | `/api/hooks` | Hook 列表 / 创建 |
 | `GET/PUT/DELETE` | `/api/hooks/:id` | 详情 / 更新 / 删除 |
-| `GET` | `/api/executions` · `/api/executions/:id` | 执行日志 |
+| `GET` | `/api/executions` · `/api/executions/:id` · `/api/executions/:id/logs` | 执行记录 / 详情 / 增量日志 |
+| `POST` | `/api/executions/:id/cancel` | 中断正在运行的异步执行 |
+| `GET/POST` | `/api/settings/api-token` · `/api/settings/api-token/regenerate` | 查看 / 重新生成 API token |
 | `GET/POST/PUT/DELETE` | `/api/scripts` | 脚本管理 |
 | `POST` | `/api/scripts/test` | 试运行脚本 |
 | `GET/POST/PUT/DELETE` | `/api/ssh-hosts` | SSH 主机管理 |
 | `POST` | `/api/ssh-hosts/test` | 测试连接 |
+
+### 外部只读 API（凭 API token）
+
+在「设置」页生成 token 后，外部系统（CI、监控等）凭 `X-API-Token` 请求头访问，**无需登录**，作用域仅限只读执行记录与日志：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/external/executions` | 执行记录列表（支持 `limit`/`offset`/`hook_id`） |
+| `GET` | `/api/external/executions/:id` | 单条详情 |
+| `GET` | `/api/external/executions/:id/logs` | 增量日志，`?after_seq=N` 游标轮询 |
+
+响应带 `next_seq`（下次起点）、`oldest_seq`（仍在的最老序号——你的游标比它小说明中间丢过一段）、`has_more`（还有积压）、`status`/`finished`。token 打不开 `/api/...` 的会话端点，也碰不到 hooks/scripts/ssh-hosts 及任何写操作与中断。
 
 ## 🛠️ 开发
 
