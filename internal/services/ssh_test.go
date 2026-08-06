@@ -180,7 +180,7 @@ func TestExecuteScriptSSHPipesContentViaStdin(t *testing.T) {
 	defer result.Client.Close()
 
 	content := "echo hello from script"
-	execResult := ExecuteScriptSSH(result.Client, "bash", content, nil, nil, "")
+	execResult := ExecuteScriptSSH(result.Client, models.TargetOSLinux, "bash", content, nil, nil, "")
 	if !execResult.Success {
 		t.Fatalf("expected success, got: %s", execResult.Error)
 	}
@@ -237,7 +237,7 @@ func TestExecuteCommandSSH(t *testing.T) {
 	}
 	defer result.Client.Close()
 
-	execResult := ExecuteCommandSSH(result.Client, "echo ok", nil, nil, "")
+	execResult := ExecuteCommandSSH(result.Client, models.TargetOSLinux, "echo ok", nil, nil, "")
 	if !execResult.Success {
 		t.Fatalf("expected success, got: %s", execResult.Error)
 	}
@@ -247,7 +247,7 @@ func TestExecuteCommandSSH(t *testing.T) {
 }
 
 func TestExecuteCommandSSHRejectsEmptyCommand(t *testing.T) {
-	if r := ExecuteCommandSSH(nil, "   ", nil, nil, ""); r.Success {
+	if r := ExecuteCommandSSH(nil, models.TargetOSLinux, "   ", nil, nil, ""); r.Success {
 		t.Fatal("empty command must be rejected before dialing a session")
 	}
 }
@@ -285,7 +285,7 @@ func TestExecuteScriptSSHRejectsInvalidInterpreter(t *testing.T) {
 	}
 	defer result.Client.Close()
 
-	execResult := ExecuteScriptSSH(result.Client, "bash; touch /tmp/pwn", "echo hi", nil, nil, "")
+	execResult := ExecuteScriptSSH(result.Client, models.TargetOSLinux, "bash; touch /tmp/pwn", "echo hi", nil, nil, "")
 	if execResult.Success {
 		t.Fatal("expected rejection of non-enum interpreter")
 	}
@@ -324,5 +324,108 @@ func TestRunCommand(t *testing.T) {
 	}
 	if !strings.Contains(out, "ok") {
 		t.Errorf("expected command output, got: %q", out)
+	}
+}
+
+func TestExecuteScriptSSHWindowsPipesPreambleAndContent(t *testing.T) {
+	addr, _ := startTestServer(t)
+	h := testHost(addr)
+
+	result, err := DialSSH(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Client.Close()
+
+	execResult := ExecuteScriptSSH(result.Client, models.TargetOSWindows, "powershell",
+		"Write-Output $args[0]", []string{"v1"}, map[string]string{"MY_VAR": "x"}, `D:\app`)
+	if !execResult.Success {
+		t.Fatalf("expected success, got: %s", execResult.Error)
+	}
+	for _, want := range []string{
+		`Set-Location -LiteralPath 'D:\app'`,
+		"$env:MY_VAR = 'x'",
+		"$args = @('v1')",
+		"Write-Output $args[0]",
+	} {
+		if !strings.Contains(execResult.Output, want) {
+			t.Errorf("piped stdin missing %q, got: %q", want, execResult.Output)
+		}
+	}
+}
+
+func TestExecuteScriptSSHRejectsInterpreterForWrongOS(t *testing.T) {
+	cases := []struct{ targetOS, interpreter string }{
+		{models.TargetOSWindows, "bash"},
+		{models.TargetOSLinux, "powershell"},
+	}
+	for _, c := range cases {
+		if r := ExecuteScriptSSH(nil, c.targetOS, c.interpreter, "echo hi", nil, nil, ""); r.Success {
+			t.Errorf("%s on a %s target must be rejected before dialing", c.interpreter, c.targetOS)
+		}
+	}
+}
+
+func TestPowershellPreambleEscapesQuotes(t *testing.T) {
+	got := powershellPreamble([]string{"a'b"}, map[string]string{"MY_VAR": "x'y"}, "")
+	if !strings.Contains(got, "$args = @('a''b')") {
+		t.Errorf("arg quote not doubled: %q", got)
+	}
+	if !strings.Contains(got, "$env:MY_VAR = 'x''y'") {
+		t.Errorf("env quote not doubled: %q", got)
+	}
+}
+
+func TestPowershellPreambleSkipsInvalidEnvKeys(t *testing.T) {
+	got := powershellPreamble(nil, map[string]string{
+		"GOOD_KEY":            "1",
+		"BAD KEY":             "2",
+		"X'; rm -rf /; $null": "3",
+	}, "")
+	if !strings.Contains(got, "$env:GOOD_KEY = '1'") {
+		t.Errorf("valid key dropped: %q", got)
+	}
+	if strings.Contains(got, "BAD KEY") || strings.Contains(got, "rm -rf") {
+		t.Errorf("invalid keys must be skipped, got: %q", got)
+	}
+}
+
+func TestPowershellPreambleAbortsOnUnusableWorkDir(t *testing.T) {
+	got := powershellPreamble(nil, nil, `D:\missing`)
+	if !strings.Contains(got, "if (-not $?) { exit 1 }") {
+		t.Errorf("a failed Set-Location must abort the run, got: %q", got)
+	}
+	if powershellPreamble(nil, nil, "") != "$args = @()\n" {
+		t.Error("empty workDir must not emit a Set-Location")
+	}
+}
+
+func TestWindowsCommandLine(t *testing.T) {
+	got, err := windowsCommandLine("npm run start", []string{"a b"}, map[string]string{"MY_VAR": "x"}, `D:\app`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `cd /d "D:\app" && set "MY_VAR=x" && npm run start "a b"`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestCmdQuoteRejectsUnquotableValues(t *testing.T) {
+	for _, bad := range []string{`a"b`, "a%PATH%b", "a\nb", "a\rb"} {
+		if _, err := cmdQuote(bad); err == nil {
+			t.Errorf("cmdQuote(%q) must fail: cmd.exe cannot quote it safely", bad)
+		}
+	}
+	got, err := cmdQuote("plain value")
+	if err != nil || got != `"plain value"` {
+		t.Errorf(`cmdQuote("plain value") = %q, %v`, got, err)
+	}
+}
+
+func TestExecuteCommandSSHWindowsRejectsUnquotableArg(t *testing.T) {
+	r := ExecuteCommandSSH(nil, models.TargetOSWindows, "echo", []string{`x" & calc.exe`}, nil, "")
+	if r.Success {
+		t.Fatal("an arg that breaks cmd.exe quoting must be rejected before dialing")
 	}
 }

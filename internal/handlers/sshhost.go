@@ -22,7 +22,7 @@ func NewSSHHostHandler() *SSHHostHandler {
 
 func (h *SSHHostHandler) List(c *gin.Context) {
 	rows, err := database.DB.Query(`
-		SELECT id, name, host, port, user, auth_type, host_key, created_at, updated_at
+		SELECT id, name, host, port, user, auth_type, target_os, host_key, created_at, updated_at
 		FROM ssh_hosts ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -35,7 +35,7 @@ func (h *SSHHostHandler) List(c *gin.Context) {
 	for rows.Next() {
 		var item models.SSHHost
 		if err := rows.Scan(&item.ID, &item.Name, &item.Host, &item.Port, &item.User,
-			&item.AuthType, &item.HostKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			&item.AuthType, &item.TargetOS, &item.HostKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -49,10 +49,10 @@ func (h *SSHHostHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 	var host models.SSHHost
 	err := database.DB.QueryRow(`
-		SELECT id, name, host, port, user, auth_type, credential, host_key, created_at, updated_at
+		SELECT id, name, host, port, user, auth_type, target_os, credential, host_key, created_at, updated_at
 		FROM ssh_hosts WHERE id = ?
 	`, id).Scan(&host.ID, &host.Name, &host.Host, &host.Port, &host.User,
-		&host.AuthType, &host.Credential, &host.HostKey, &host.CreatedAt, &host.UpdatedAt)
+		&host.AuthType, &host.TargetOS, &host.Credential, &host.HostKey, &host.CreatedAt, &host.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ssh host not found"})
@@ -77,15 +77,18 @@ func (h *SSHHostHandler) Create(c *gin.Context) {
 	if host.Port == 0 {
 		host.Port = 22
 	}
+	if host.TargetOS == "" {
+		host.TargetOS = models.TargetOSLinux
+	}
 	if err := host.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	_, err := database.DB.Exec(`
-		INSERT INTO ssh_hosts (id, name, host, port, user, auth_type, credential, host_key)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, host.ID, host.Name, host.Host, host.Port, host.User, host.AuthType, host.Credential, host.HostKey)
+		INSERT INTO ssh_hosts (id, name, host, port, user, auth_type, target_os, credential, host_key)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, host.ID, host.Name, host.Host, host.Port, host.User, host.AuthType, host.TargetOS, host.Credential, host.HostKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -103,15 +106,18 @@ func (h *SSHHostHandler) Update(c *gin.Context) {
 	}
 
 	host.ID = id
+	if host.TargetOS == "" {
+		host.TargetOS = models.TargetOSLinux
+	}
 	if err := host.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	result, err := database.DB.Exec(`
-		UPDATE ssh_hosts SET name=?, host=?, port=?, user=?, auth_type=?, credential=?, host_key=?, updated_at=?
+		UPDATE ssh_hosts SET name=?, host=?, port=?, user=?, auth_type=?, target_os=?, credential=?, host_key=?, updated_at=?
 		WHERE id=?
-	`, host.Name, host.Host, host.Port, host.User, host.AuthType, host.Credential, host.HostKey, time.Now(), id)
+	`, host.Name, host.Host, host.Port, host.User, host.AuthType, host.TargetOS, host.Credential, host.HostKey, time.Now(), id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -177,6 +183,9 @@ func (h *SSHHostHandler) Test(c *gin.Context) {
 
 	if host.Port == 0 {
 		host.Port = 22
+	}
+	if host.TargetOS == "" {
+		host.TargetOS = models.TargetOSLinux
 	}
 	if err := host.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

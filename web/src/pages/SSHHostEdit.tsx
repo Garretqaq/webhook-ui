@@ -80,7 +80,7 @@ export default function SSHHostEdit() {
         form={form}
         layout="vertical"
         onFinish={onFinish}
-        initialValues={{ port: 22, auth_type: 'key' }}
+        initialValues={{ port: 22, auth_type: 'key', target_os: 'linux' }}
       >
         <Form.Item
           name="name"
@@ -125,6 +125,18 @@ export default function SSHHostEdit() {
           <Select style={{ width: 200 }}>
             <Select.Option value="key">私钥</Select.Option>
             <Select.Option value="password">密码</Select.Option>
+          </Select>
+        </Form.Item>
+
+        <Form.Item
+          name="target_os"
+          label="目标系统"
+          rules={[{ required: true }]}
+          extra="决定远程命令的语法：Linux 用 POSIX shell，Windows 用 cmd.exe（Windows OpenSSH 的默认 shell）。Windows 主机上脚本只能用 powershell 解释器"
+        >
+          <Select style={{ width: 200 }}>
+            <Select.Option value="linux">Linux</Select.Option>
+            <Select.Option value="windows">Windows</Select.Option>
           </Select>
         </Form.Item>
 

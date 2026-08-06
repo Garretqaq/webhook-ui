@@ -115,14 +115,19 @@ func RunCommand(client *ssh.Client, command string) (string, error) {
 }
 
 // ExecuteScriptSSH runs script content on the remote host by piping it to
-// the interpreter's stdin (bash -s / sh -s / python3 -). Nothing is written
-// to the remote filesystem. Execution is bounded by the same 5 minute
-// timeout as local execution. workDir may be empty to run in the login
-// directory; otherwise the remote shell cds into it first and the whole
-// execution fails if the directory does not exist.
-func ExecuteScriptSSH(client *ssh.Client, interpreter, content string, args []string, env map[string]string, workDir string) *ExecuteResult {
-	if !models.IsValidInterpreter(interpreter) {
-		return &ExecuteResult{Success: false, Error: fmt.Sprintf("invalid interpreter: %s", interpreter)}
+// the interpreter's stdin (bash -s / sh -s / python3 - on Linux, powershell
+// -Command - on Windows). Nothing is written to the remote filesystem.
+// Execution is bounded by the same 5 minute timeout as local execution.
+// workDir may be empty to run in the login directory; otherwise the remote
+// shell cds into it first and the whole execution fails if the directory
+// does not exist.
+func ExecuteScriptSSH(client *ssh.Client, targetOS, interpreter, content string, args []string, env map[string]string, workDir string) *ExecuteResult {
+	if !models.IsInterpreterForOS(interpreter, targetOS) {
+		return &ExecuteResult{Success: false, Error: fmt.Sprintf("interpreter %q cannot run on a %s target", interpreter, targetOS)}
+	}
+	if targetOS == models.TargetOSWindows {
+		stdin := strings.NewReader(powershellPreamble(args, env, workDir) + content)
+		return runSSHSession(client, windowsScriptCommand, stdin)
 	}
 	return runSSHSession(client, sshScriptCommand(interpreter, args, env, workDir), strings.NewReader(content))
 }
@@ -130,9 +135,16 @@ func ExecuteScriptSSH(client *ssh.Client, interpreter, content string, args []st
 // ExecuteCommandSSH runs a free-form command on the remote host. Unlike
 // local execution there is no ALLOWED_COMMANDS whitelist — the whitelist
 // describes binaries on the webhook server, not on the remote machine.
-func ExecuteCommandSSH(client *ssh.Client, command string, args []string, env map[string]string, workDir string) *ExecuteResult {
+func ExecuteCommandSSH(client *ssh.Client, targetOS, command string, args []string, env map[string]string, workDir string) *ExecuteResult {
 	if strings.TrimSpace(command) == "" {
 		return &ExecuteResult{Success: false, Error: "command is empty"}
+	}
+	if targetOS == models.TargetOSWindows {
+		line, err := windowsCommandLine(command, args, env, workDir)
+		if err != nil {
+			return &ExecuteResult{Success: false, Error: err.Error()}
+		}
+		return runSSHSession(client, line, nil)
 	}
 	return runSSHSession(client, sshCommandLine(command, args, env, workDir), nil)
 }
@@ -226,16 +238,8 @@ func cdPrefix(workDir string) string {
 var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func envPrefix(env map[string]string) string {
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		if envKeyPattern.MatchString(k) {
-			keys = append(keys, k)
-		}
-	}
-	sort.Strings(keys)
-
 	var b strings.Builder
-	for _, k := range keys {
+	for _, k := range sortedEnvKeys(env) {
 		b.WriteString(k)
 		b.WriteByte('=')
 		b.WriteString(shellEscape(env[k]))
@@ -244,6 +248,97 @@ func envPrefix(env map[string]string) string {
 	return b.String()
 }
 
+func sortedEnvKeys(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		if envKeyPattern.MatchString(k) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// windowsScriptCommand is the remote command for a Windows target. Per
+// about_PowerShell_exe, `-Command -` reads the script from stdin and runs it
+// one statement at a time as though typed at the prompt: no param() block is
+// honoured and no $args is bound, so workDir, env and args cannot ride on the
+// command line — powershellPreamble injects them into the piped content.
+const windowsScriptCommand = "powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -"
+
+// powershellPreamble renders the statements prepended to the piped script.
+func powershellPreamble(args []string, env map[string]string, workDir string) string {
+	var b strings.Builder
+	if workDir != "" {
+		// Statements from stdin keep executing after a non-terminating error,
+		// so a failed Set-Location has to abort explicitly — otherwise the
+		// script body would run in the login directory instead.
+		b.WriteString("Set-Location -LiteralPath " + psEscape(workDir) + "\n")
+		b.WriteString("if (-not $?) { exit 1 }\n")
+	}
+	for _, k := range sortedEnvKeys(env) {
+		b.WriteString("$env:" + k + " = " + psEscape(env[k]) + "\n")
+	}
+	b.WriteString("$args = @(")
+	for i, a := range args {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(psEscape(a))
+	}
+	b.WriteString(")\n")
+	return b.String()
+}
+
+// psEscape renders s as a PowerShell single-quoted string. The quote is the
+// only metacharacter inside one — no $ or backtick expansion happens — so
+// doubling it is a total escape.
+func psEscape(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// windowsCommandLine builds the remote command for a free-form hook command on
+// a Windows target, whose default OpenSSH shell is cmd.exe.
+func windowsCommandLine(command string, args []string, env map[string]string, workDir string) (string, error) {
+	var b strings.Builder
+	if workDir != "" {
+		q, err := cmdQuote(workDir)
+		if err != nil {
+			return "", fmt.Errorf("working dir: %w", err)
+		}
+		b.WriteString("cd /d " + q + " && ")
+	}
+	for _, k := range sortedEnvKeys(env) {
+		q, err := cmdQuote(k + "=" + env[k])
+		if err != nil {
+			return "", fmt.Errorf("env %s: %w", k, err)
+		}
+		b.WriteString("set " + q + " && ")
+	}
+	b.WriteString(command)
+	for _, a := range args {
+		q, err := cmdQuote(a)
+		if err != nil {
+			return "", fmt.Errorf("argument: %w", err)
+		}
+		b.WriteByte(' ')
+		b.WriteString(q)
+	}
+	return b.String(), nil
+}
+
+// cmdQuote renders s as a cmd.exe double-quoted string. cmd.exe offers no
+// escape for a double quote inside one, still expands %VAR% there, and treats
+// a newline as the end of the command line — a payload-controlled value
+// carrying any of those could break out of the quoting, so reject it rather
+// than mangle it into something that silently runs.
+func cmdQuote(s string) (string, error) {
+	if strings.ContainsAny(s, "\"%\r\n") {
+		return "", fmt.Errorf(`cmd.exe cannot safely quote a value containing " %% CR or LF: %q`, s)
+	}
+	return `"` + s + `"`, nil
 }

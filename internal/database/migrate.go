@@ -2,7 +2,7 @@ package database
 
 import "fmt"
 
-const schemaVersion = 7
+const schemaVersion = 8
 
 func Migrate() error {
 	return migrateTo(schemaVersion)
@@ -91,6 +91,9 @@ func migrateTo(target int) error {
 			 WHERE script_id != ''`,
 			`ALTER TABLE scripts DROP COLUMN ssh_host_id`,
 			`ALTER TABLE executions ADD COLUMN exec_target TEXT DEFAULT ''`,
+		},
+		{ // 7 -> 8: remote command syntax depends on the target's OS
+			`ALTER TABLE ssh_hosts ADD COLUMN target_os TEXT NOT NULL DEFAULT 'linux'`,
 		},
 	}
 

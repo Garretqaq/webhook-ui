@@ -48,6 +48,12 @@ export default function SSHHostList() {
       render: (_: any, r: SSHHost) => <code>{r.user}@{r.host}:{r.port}</code>,
     },
     {
+      title: '系统',
+      dataIndex: 'target_os',
+      key: 'target_os',
+      render: (os: string) => os === 'windows' ? <Tag color="geekblue">Windows</Tag> : <Tag>Linux</Tag>,
+    },
+    {
       title: '认证',
       dataIndex: 'auth_type',
       key: 'auth_type',

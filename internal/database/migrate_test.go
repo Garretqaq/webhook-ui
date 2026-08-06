@@ -78,6 +78,27 @@ func TestMigrateV7BackfillsHookExecLocation(t *testing.T) {
 	}
 }
 
+func TestMigrateV8DefaultsExistingHostsToLinux(t *testing.T) {
+	openTestDB(t)
+	if err := migrateTo(7); err != nil {
+		t.Fatalf("migrate to v7: %v", err)
+	}
+	mustExec(t, `INSERT INTO ssh_hosts (id, name, host, port, user, auth_type, credential)
+	             VALUES ('h1', 'prod', '10.0.0.1', 22, 'deploy', 'password', 'x')`)
+
+	if err := Migrate(); err != nil {
+		t.Fatalf("migrate to v8: %v", err)
+	}
+
+	var targetOS string
+	if err := DB.QueryRow("SELECT target_os FROM ssh_hosts WHERE id = 'h1'").Scan(&targetOS); err != nil {
+		t.Fatal(err)
+	}
+	if targetOS != "linux" {
+		t.Errorf("pre-existing host target_os = %q, want linux", targetOS)
+	}
+}
+
 func mustExec(t *testing.T, query string) {
 	t.Helper()
 	if _, err := DB.Exec(query); err != nil {

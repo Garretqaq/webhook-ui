@@ -100,12 +100,13 @@ export default function ScriptEdit() {
           name="interpreter"
           label="解释器"
           rules={[{ required: true, message: '请选择解释器' }]}
-          extra="本地执行时解释器必须在服务端的 ALLOWED_COMMANDS 白名单内"
+          extra="本地执行时解释器必须在服务端的 ALLOWED_COMMANDS 白名单内。powershell 只能配合目标系统为 Windows 的 SSH 主机使用，其余解释器只能用于 Linux"
         >
           <Select>
             <Select.Option value="bash">bash</Select.Option>
             <Select.Option value="sh">sh</Select.Option>
             <Select.Option value="python3">python3</Select.Option>
+            <Select.Option value="powershell">powershell (Windows)</Select.Option>
           </Select>
         </Form.Item>
 
@@ -117,7 +118,7 @@ export default function ScriptEdit() {
           name="content"
           label="脚本内容"
           rules={[{ required: true, message: '请输入脚本内容' }]}
-          extra="通过位置参数 ($1, $2...) 和环境变量 (QUERY_*, HEADER_*, PAYLOAD) 获取 webhook 传入的数据"
+          extra="通过位置参数和环境变量 (QUERY_*, HEADER_*, PAYLOAD) 获取 webhook 传入的数据。bash/sh 用 $1 $2，python3 用 sys.argv，powershell 用 $args[0] $args[1]（stdin 执行模式不支持 param() 块）"
         >
           <TextArea
             rows={14}

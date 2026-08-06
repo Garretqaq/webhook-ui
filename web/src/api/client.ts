@@ -65,6 +65,7 @@ export interface SSHHost {
   port: number
   user: string
   auth_type: 'key' | 'password'
+  target_os: 'linux' | 'windows'
   credential?: string
   host_key?: string
   created_at: string

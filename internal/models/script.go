@@ -7,11 +7,28 @@ import (
 	"time"
 )
 
-var validInterpreters = []string{"bash", "sh", "python3"}
+var validInterpreters = []string{"bash", "sh", "python3", "powershell"}
+
+// windowsInterpreters run only on Windows targets; everything else in
+// validInterpreters runs only on Linux ones. A script is not bound to a host,
+// so Validate accepts the union and the target check happens at execution.
+var windowsInterpreters = []string{"powershell"}
 
 func IsValidInterpreter(name string) bool {
-	for _, it := range validInterpreters {
-		if name == it {
+	return contains(validInterpreters, name)
+}
+
+// IsInterpreterForOS reports whether the interpreter can run on targetOS.
+func IsInterpreterForOS(name, targetOS string) bool {
+	if targetOS == TargetOSWindows {
+		return contains(windowsInterpreters, name)
+	}
+	return IsValidInterpreter(name) && !contains(windowsInterpreters, name)
+}
+
+func contains(list []string, s string) bool {
+	for _, it := range list {
+		if it == s {
 			return true
 		}
 	}

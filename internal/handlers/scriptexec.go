@@ -16,8 +16,8 @@ func runScript(executor *services.Executor, interpreter, content, sshHostID stri
 	if sshHostID == "" {
 		return executor.ExecuteScript(interpreter, content, args, env, workDir)
 	}
-	return runRemote(sshHostID, func(client *ssh.Client) *services.ExecuteResult {
-		return services.ExecuteScriptSSH(client, interpreter, content, args, env, workDir)
+	return runRemote(sshHostID, func(client *ssh.Client, host *models.SSHHost) *services.ExecuteResult {
+		return services.ExecuteScriptSSH(client, host.TargetOS, interpreter, content, args, env, workDir)
 	})
 }
 
@@ -27,14 +27,14 @@ func runCommand(executor *services.Executor, hook *models.Hook, args []string, e
 	if hook.SSHHostID == "" {
 		return executor.Execute(hook, env, args)
 	}
-	return runRemote(hook.SSHHostID, func(client *ssh.Client) *services.ExecuteResult {
-		return services.ExecuteCommandSSH(client, hook.Command, args, env, hook.WorkingDir)
+	return runRemote(hook.SSHHostID, func(client *ssh.Client, host *models.SSHHost) *services.ExecuteResult {
+		return services.ExecuteCommandSSH(client, host.TargetOS, hook.Command, args, env, hook.WorkingDir)
 	})
 }
 
 // runRemote dials the host, hands the connection to run, and persists any
 // host key learned on first use.
-func runRemote(sshHostID string, run func(*ssh.Client) *services.ExecuteResult) *services.ExecuteResult {
+func runRemote(sshHostID string, run func(*ssh.Client, *models.SSHHost) *services.ExecuteResult) *services.ExecuteResult {
 	host, err := loadSSHHost(sshHostID)
 	if err != nil {
 		return &services.ExecuteResult{Success: false, Error: fmt.Sprintf("ssh host not found: %s", sshHostID)}
@@ -48,7 +48,7 @@ func runRemote(sshHostID string, run func(*ssh.Client) *services.ExecuteResult) 
 
 	persistLearnedHostKey(host.ID, dialResult.LearnedHostKey)
 
-	return run(dialResult.Client)
+	return run(dialResult.Client, host)
 }
 
 // execTarget renders where a hook runs, for the execution log snapshot. It
@@ -77,10 +77,10 @@ func persistLearnedHostKey(hostID, learnedKey string) {
 func loadSSHHost(id string) (*models.SSHHost, error) {
 	var host models.SSHHost
 	err := database.DB.QueryRow(`
-		SELECT id, name, host, port, user, auth_type, credential, host_key
+		SELECT id, name, host, port, user, auth_type, target_os, credential, host_key
 		FROM ssh_hosts WHERE id = ?
 	`, id).Scan(&host.ID, &host.Name, &host.Host, &host.Port, &host.User,
-		&host.AuthType, &host.Credential, &host.HostKey)
+		&host.AuthType, &host.TargetOS, &host.Credential, &host.HostKey)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("ssh host not found: %s", id)
 	}

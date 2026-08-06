@@ -22,3 +22,44 @@ func TestScriptValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestIsInterpreterForOS(t *testing.T) {
+	cases := []struct {
+		interpreter string
+		targetOS    string
+		want        bool
+	}{
+		{"bash", TargetOSLinux, true},
+		{"python3", TargetOSLinux, true},
+		{"powershell", TargetOSLinux, false},
+		{"powershell", TargetOSWindows, true},
+		{"bash", TargetOSWindows, false},
+		{"cmd", TargetOSWindows, false},
+		{"bash; touch /tmp/pwn", TargetOSLinux, false},
+	}
+	for _, c := range cases {
+		if got := IsInterpreterForOS(c.interpreter, c.targetOS); got != c.want {
+			t.Errorf("IsInterpreterForOS(%q, %q) = %v, want %v", c.interpreter, c.targetOS, got, c.want)
+		}
+	}
+}
+
+func TestSSHHostValidateTargetOS(t *testing.T) {
+	base := func() *SSHHost {
+		return &SSHHost{Name: "h", Host: "1.2.3.4", Port: 22, User: "u",
+			AuthType: SSHAuthPassword, Credential: "p", TargetOS: TargetOSWindows}
+	}
+	if err := base().Validate(); err != nil {
+		t.Errorf("windows target should be valid: %v", err)
+	}
+	bad := base()
+	bad.TargetOS = "solaris"
+	if err := bad.Validate(); err == nil {
+		t.Error("unknown target_os must be rejected")
+	}
+	empty := base()
+	empty.TargetOS = ""
+	if err := empty.Validate(); err == nil {
+		t.Error("empty target_os must be rejected (handlers default it to linux first)")
+	}
+}
