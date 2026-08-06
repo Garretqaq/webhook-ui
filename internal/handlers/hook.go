@@ -30,6 +30,7 @@ func (h *HookHandler) List(c *gin.Context) {
 	rows, err := database.DB.Query(`
 		SELECT h.id, h.name, h.command, h.script_id, h.ssh_host_id, h.working_dir, h.response_message,
 		       h.hmac_algorithm, h.pass_arguments, h.pass_headers, h.pass_payload_to,
+		       h.async, h.timeout_seconds,
 		       h.created_at, h.updated_at, h.hmac_secret != '' as hmac_enabled,
 		       h.trigger_token != '' as trigger_token_enabled,
 		       COALESCE(s.name, '') as script_name,
@@ -52,6 +53,7 @@ func (h *HookHandler) List(c *gin.Context) {
 			&item.ID, &item.Name, &item.Command, &item.ScriptID, &item.SSHHostID, &item.WorkingDir,
 			&item.ResponseMessage, &item.HMACAlgorithm,
 			&item.PassArguments, &item.PassHeaders, &item.PassPayloadTo,
+			&item.Async, &item.TimeoutSeconds,
 			&item.CreatedAt, &item.UpdatedAt, &item.HMACEnabled,
 			&item.TriggerTokenEnabled, &item.ScriptName, &item.SSHHostName,
 		)
@@ -71,13 +73,13 @@ func (h *HookHandler) Get(c *gin.Context) {
 	err := database.DB.QueryRow(`
 		SELECT id, name, command, script_id, ssh_host_id, working_dir, response_message,
 		       hmac_secret, hmac_algorithm, trigger_token, pass_arguments, pass_headers, pass_payload_to,
-		       created_at, updated_at
+		       async, timeout_seconds, created_at, updated_at
 		FROM hooks WHERE id = ?
 	`, id).Scan(
 		&hook.ID, &hook.Name, &hook.Command, &hook.ScriptID, &hook.SSHHostID, &hook.WorkingDir,
 		&hook.ResponseMessage, &hook.HMACSecret, &hook.HMACAlgorithm, &hook.TriggerToken,
 		&hook.PassArguments, &hook.PassHeaders, &hook.PassPayloadTo,
-		&hook.CreatedAt, &hook.UpdatedAt,
+		&hook.Async, &hook.TimeoutSeconds, &hook.CreatedAt, &hook.UpdatedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -117,11 +119,13 @@ func (h *HookHandler) Create(c *gin.Context) {
 
 	_, err := database.DB.Exec(`
 		INSERT INTO hooks (id, name, command, script_id, ssh_host_id, working_dir, response_message,
-		                  hmac_secret, hmac_algorithm, trigger_token, pass_arguments, pass_headers, pass_payload_to)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                  hmac_secret, hmac_algorithm, trigger_token, pass_arguments, pass_headers, pass_payload_to,
+		                  async, timeout_seconds)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, hook.ID, hook.Name, hook.Command, hook.ScriptID, hook.SSHHostID, hook.WorkingDir, hook.ResponseMessage,
 		hook.HMACSecret, hook.HMACAlgorithm, hook.TriggerToken,
-		hook.PassArguments, hook.PassHeaders, hook.PassPayloadTo)
+		hook.PassArguments, hook.PassHeaders, hook.PassPayloadTo,
+		hook.Async, hook.TimeoutSeconds)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -152,11 +156,11 @@ func (h *HookHandler) Update(c *gin.Context) {
 	result, err := database.DB.Exec(`
 		UPDATE hooks SET name=?, command=?, script_id=?, ssh_host_id=?, working_dir=?, response_message=?,
 		                hmac_secret=?, hmac_algorithm=?, trigger_token=?, pass_arguments=?, pass_headers=?,
-		                pass_payload_to=?, updated_at=?
+		                pass_payload_to=?, async=?, timeout_seconds=?, updated_at=?
 		WHERE id=?
 	`, hook.Name, hook.Command, hook.ScriptID, hook.SSHHostID, hook.WorkingDir, hook.ResponseMessage,
 		hook.HMACSecret, hook.HMACAlgorithm, hook.TriggerToken, hook.PassArguments, hook.PassHeaders,
-		hook.PassPayloadTo, time.Now(), id)
+		hook.PassPayloadTo, hook.Async, hook.TimeoutSeconds, time.Now(), id)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

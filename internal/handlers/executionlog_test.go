@@ -264,10 +264,10 @@ func TestTailLimitReachesTheLocalExecutorToo(t *testing.T) {
 	}
 	executor := services.NewExecutor([]string{shPath}, t.TempDir())
 
-	// OutputStream carries the cap for both execution locations; it used to be
+	// ExecOptions carries the cap for both execution locations; it used to be
 	// unwrapped on the local path and silently dropped.
 	result := runScript(executor, shPath, "for i in 1 2 3 4 5 6 7 8 9; do echo LINE$i; done",
-		"", nil, nil, "", services.OutputStream{TailBytes: 12})
+		"", nil, nil, "", services.ExecOptions{TailBytes: 12})
 
 	if !result.Success {
 		t.Fatalf("expected success, got: %s", result.Error)

@@ -83,7 +83,14 @@ func main() {
 	authHandler := handlers.NewAuthHandler(cfg.AdminUsername, cfg.AdminPassword, loginGuard)
 	hookHandler := handlers.NewHookHandler()
 	executor := services.NewExecutor(cfg.AllowedCommands, cfg.DataDir)
-	webhookHandler := handlers.NewWebhookHandler(executor, cfg.LogTailBytes)
+	if n, err := handlers.SweepInterruptedExecutions(); err != nil {
+		log.Printf("sweep interrupted executions: %v", err)
+	} else if n > 0 {
+		log.Printf("marked %d execution(s) interrupted by the previous shutdown", n)
+	}
+
+	runner := handlers.NewRunner(cfg.MaxConcurrentExecutions, cfg.MaxQueuedExecutions)
+	webhookHandler := handlers.NewWebhookHandler(executor, cfg.LogTailBytes, runner)
 	executionHandler := handlers.NewExecutionHandler()
 	scriptHandler := handlers.NewScriptHandler(executor, cfg.LogTailBytes)
 	sshHostHandler := handlers.NewSSHHostHandler()

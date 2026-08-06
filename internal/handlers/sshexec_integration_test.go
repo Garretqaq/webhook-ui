@@ -104,7 +104,7 @@ func TestRemoteScriptStreamsIntoTheLogTable(t *testing.T) {
 
 	execID := startedExecution(t)
 	executor := services.NewExecutor(nil, t.TempDir())
-	out := services.OutputStream{Sink: sinkFor(execID, 0)}
+	out := services.ExecOptions{Sink: sinkFor(execID, 0)}
 
 	done := make(chan *services.ExecuteResult, 1)
 	go func() {

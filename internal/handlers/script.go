@@ -195,7 +195,7 @@ func (h *ScriptHandler) Test(c *gin.Context) {
 	// output is only aggregated onto the response — still capped, or a runaway
 	// test script would be answered with everything it printed.
 	result := runScript(h.executor, req.Interpreter, req.Content, req.SSHHostID, req.Args, nil, "",
-		services.OutputStream{TailBytes: h.logTailBytes})
+		services.ExecOptions{TailBytes: h.logTailBytes})
 	c.JSON(http.StatusOK, gin.H{
 		"success": result.Success,
 		"output":  result.Output,

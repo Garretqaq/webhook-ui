@@ -4,8 +4,10 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -19,10 +21,11 @@ import (
 type WebhookHandler struct {
 	executor     *services.Executor
 	logTailBytes int
+	runner       *Runner
 }
 
-func NewWebhookHandler(executor *services.Executor, logTailBytes int) *WebhookHandler {
-	return &WebhookHandler{executor: executor, logTailBytes: logTailBytes}
+func NewWebhookHandler(executor *services.Executor, logTailBytes int, runner *Runner) *WebhookHandler {
+	return &WebhookHandler{executor: executor, logTailBytes: logTailBytes, runner: runner}
 }
 
 func (h *WebhookHandler) Trigger(c *gin.Context) {
@@ -31,12 +34,14 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 	var hook models.Hook
 	err := database.DB.QueryRow(`
 		SELECT id, name, command, script_id, ssh_host_id, working_dir, response_message,
-		       hmac_secret, hmac_algorithm, trigger_token, pass_arguments, pass_headers, pass_payload_to
+		       hmac_secret, hmac_algorithm, trigger_token, pass_arguments, pass_headers, pass_payload_to,
+		       async, timeout_seconds
 		FROM hooks WHERE id = ?
 	`, hookID).Scan(
 		&hook.ID, &hook.Name, &hook.Command, &hook.ScriptID, &hook.SSHHostID, &hook.WorkingDir,
 		&hook.ResponseMessage, &hook.HMACSecret, &hook.HMACAlgorithm, &hook.TriggerToken,
 		&hook.PassArguments, &hook.PassHeaders, &hook.PassPayloadTo,
+		&hook.Async, &hook.TimeoutSeconds,
 	)
 
 	if err == sql.ErrNoRows {
@@ -78,16 +83,18 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 
 	env, args := h.buildCommandInput(&hook, c, payload)
 
-	execID := h.logExecutionStart(hookID, c.ClientIP(), execTarget(hook.SSHHostID))
+	if hook.Async {
+		h.triggerAsync(c, &hook, env, args)
+		return
+	}
 
-	result := h.execute(&hook, env, args, services.OutputStream{
-		Sink:      sinkFor(execID, h.logTailBytes),
-		TailBytes: h.logTailBytes,
-	})
+	execID := h.logExecutionStart(hookID, c.ClientIP(), execTarget(hook.SSHHostID), models.StatusRunning)
 
-	status := "success"
+	result := h.execute(&hook, env, args, h.execOptions(&hook, execID))
+
+	status := models.StatusSuccess
 	if !result.Success {
-		status = "failed"
+		status = models.StatusFailed
 	}
 	h.logExecutionEnd(execID, status, result.Output, result.Error)
 
@@ -106,7 +113,7 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 
 // execute runs the hook's bound script, or its free-form command, at the
 // execution location configured on the hook.
-func (h *WebhookHandler) execute(hook *models.Hook, env map[string]string, args []string, out services.OutputStream) *services.ExecuteResult {
+func (h *WebhookHandler) execute(hook *models.Hook, env map[string]string, args []string, out services.ExecOptions) *services.ExecuteResult {
 	if hook.ScriptID == "" {
 		return runCommand(h.executor, hook, args, env, out)
 	}
@@ -167,11 +174,11 @@ func (h *WebhookHandler) buildCommandInput(hook *models.Hook, c *gin.Context, pa
 	return env, args
 }
 
-func (h *WebhookHandler) logExecutionStart(hookID, source, target string) int64 {
+func (h *WebhookHandler) logExecutionStart(hookID, source, target, status string) int64 {
 	result, err := database.DB.Exec(`
 		INSERT INTO executions (hook_id, trigger_source, exec_target, status, started_at)
-		VALUES (?, ?, ?, 'running', ?)
-	`, hookID, source, target, time.Now())
+		VALUES (?, ?, ?, ?, ?)
+	`, hookID, source, target, status, time.Now())
 	if err != nil {
 		return 0
 	}
@@ -190,4 +197,71 @@ func (h *WebhookHandler) logExecution(hookID, source, status, output, errMsg str
 		INSERT INTO executions (hook_id, trigger_source, status, output, error, started_at, finished_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, hookID, source, status, output, errMsg, time.Now(), time.Now())
+}
+
+// execOptions renders the per-call settings for one execution of hook.
+func (h *WebhookHandler) execOptions(hook *models.Hook, execID int64) services.ExecOptions {
+	return services.ExecOptions{
+		Sink:      sinkFor(execID, h.logTailBytes),
+		TailBytes: h.logTailBytes,
+		Timeout:   hook.Timeout(),
+	}
+}
+
+// triggerAsync accepts the execution and answers immediately with something
+// the caller can poll, instead of holding the request open for the whole run.
+func (h *WebhookHandler) triggerAsync(c *gin.Context, hook *models.Hook, env map[string]string, args []string) {
+	execID := h.logExecutionStart(hook.ID, c.ClientIP(), execTarget(hook.SSHHostID), models.StatusQueued)
+	if execID == 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record execution"})
+		return
+	}
+
+	release, err := h.runner.Admit(hook.ID, execID)
+	if err != nil {
+		// The row was already inserted, so retire it rather than leave a queued
+		// execution nothing will ever pick up.
+		h.logExecutionEnd(execID, models.StatusFailed, "", err.Error())
+
+		var busy *HookBusyError
+		if errors.As(err, &busy) {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":                "hook is already running",
+				"running_execution_id": busy.ExecutionID,
+			})
+			return
+		}
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
+		return
+	}
+
+	go func() {
+		defer release()
+		h.runner.Start()
+		defer h.runner.Finish()
+
+		h.markRunning(execID)
+		result := h.execute(hook, env, args, h.execOptions(hook, execID))
+
+		status := models.StatusSuccess
+		if !result.Success {
+			status = models.StatusFailed
+		}
+		h.logExecutionEnd(execID, status, result.Output, result.Error)
+	}()
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"message":      hook.ResponseMessage,
+		"execution_id": execID,
+		"status":       models.StatusQueued,
+	})
+}
+
+func (h *WebhookHandler) markRunning(execID int64) {
+	if _, err := database.DB.Exec(
+		"UPDATE executions SET status=?, started_at=? WHERE id=?",
+		models.StatusRunning, time.Now(), execID,
+	); err != nil {
+		log.Printf("mark execution %d running: %v", execID, err)
+	}
 }

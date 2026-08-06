@@ -1,7 +1,6 @@
 package database
 
 import (
-	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -12,7 +11,7 @@ import (
 // global at it for the duration of the test.
 func openTestDB(t *testing.T) {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "test.db"))
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

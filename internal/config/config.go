@@ -23,20 +23,26 @@ type Config struct {
 	// stream for the aggregate and in total for the streamed log rows. The
 	// head is dropped, since the tail is what explains a failure.
 	LogTailBytes int
+	// MaxConcurrentExecutions bounds async hooks running at once; the rest wait
+	// in a queue of at most MaxQueuedExecutions before triggers are refused.
+	MaxConcurrentExecutions int
+	MaxQueuedExecutions     int
 }
 
 func Load() *Config {
 	cfg := &Config{
-		Port:                 getEnv("PORT", "9000"),
-		DataDir:              getEnv("DATA_DIR", "./data"),
-		AdminUsername:        getEnv("ADMIN_USERNAME", "admin"),
-		AdminPassword:        getEnv("ADMIN_PASSWORD", ""),
-		TrustedProxies:       getEnvSlice("TRUSTED_PROXIES", []string{"127.0.0.1"}),
-		LoginMaxFailures:     getEnvInt("LOGIN_MAX_FAILURES", 5),
-		LoginLockoutMinutes:  getEnvInt("LOGIN_LOCKOUT_MINUTES", 15),
-		LoginRateLimitPerMin: getEnvInt("LOGIN_RATE_LIMIT_PER_MIN", 10),
-		AllowedCommands:      getEnvSlice("ALLOWED_COMMANDS", []string{"/usr/bin/git", "/usr/bin/curl", "/bin/bash", "/bin/sh", "/usr/bin/python3"}),
-		LogTailBytes:         getEnvInt("LOG_TAIL_BYTES", 5*1024*1024),
+		Port:                    getEnv("PORT", "9000"),
+		DataDir:                 getEnv("DATA_DIR", "./data"),
+		AdminUsername:           getEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword:           getEnv("ADMIN_PASSWORD", ""),
+		TrustedProxies:          getEnvSlice("TRUSTED_PROXIES", []string{"127.0.0.1"}),
+		LoginMaxFailures:        getEnvInt("LOGIN_MAX_FAILURES", 5),
+		LoginLockoutMinutes:     getEnvInt("LOGIN_LOCKOUT_MINUTES", 15),
+		LoginRateLimitPerMin:    getEnvInt("LOGIN_RATE_LIMIT_PER_MIN", 10),
+		AllowedCommands:         getEnvSlice("ALLOWED_COMMANDS", []string{"/usr/bin/git", "/usr/bin/curl", "/bin/bash", "/bin/sh", "/usr/bin/python3"}),
+		LogTailBytes:            getEnvInt("LOG_TAIL_BYTES", 5*1024*1024),
+		MaxConcurrentExecutions: getEnvInt("MAX_CONCURRENT_EXECUTIONS", 10),
+		MaxQueuedExecutions:     getEnvInt("MAX_QUEUED_EXECUTIONS", 100),
 	}
 
 	cfg.SessionSecret = os.Getenv("SESSION_SECRET")

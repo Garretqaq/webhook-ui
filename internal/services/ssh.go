@@ -118,25 +118,25 @@ func RunCommand(client *ssh.Client, command string) (string, error) {
 // ExecuteScriptSSH runs script content on the remote host by piping it to
 // the interpreter's stdin (bash -s / sh -s / python3 - on Linux, powershell
 // -Command - on Windows). Nothing is written to the remote filesystem.
-// Execution is bounded by the same 5 minute timeout as local execution.
+// Execution is bounded by opts.Timeout, as local execution is.
 // workDir may be empty to run in the login directory; otherwise the remote
 // shell cds into it first and the whole execution fails if the directory
 // does not exist.
-func ExecuteScriptSSH(client *ssh.Client, targetOS, interpreter, content string, args []string, env map[string]string, workDir string, out OutputStream) *ExecuteResult {
+func ExecuteScriptSSH(client *ssh.Client, targetOS, interpreter, content string, args []string, env map[string]string, workDir string, opts ExecOptions) *ExecuteResult {
 	if !models.IsInterpreterForOS(interpreter, targetOS) {
 		return &ExecuteResult{Success: false, Error: fmt.Sprintf("interpreter %q cannot run on a %s target", interpreter, targetOS)}
 	}
 	if targetOS == models.TargetOSWindows {
 		stdin := strings.NewReader(powershellPreamble(args, env, workDir) + content)
-		return runSSHSession(client, windowsScriptCommand, stdin, out)
+		return runSSHSession(client, windowsScriptCommand, stdin, opts)
 	}
-	return runSSHSession(client, sshScriptCommand(interpreter, args, env, workDir), strings.NewReader(content), out)
+	return runSSHSession(client, sshScriptCommand(interpreter, args, env, workDir), strings.NewReader(content), opts)
 }
 
 // ExecuteCommandSSH runs a free-form command on the remote host. Unlike
 // local execution there is no ALLOWED_COMMANDS whitelist — the whitelist
 // describes binaries on the webhook server, not on the remote machine.
-func ExecuteCommandSSH(client *ssh.Client, targetOS, command string, args []string, env map[string]string, workDir string, out OutputStream) *ExecuteResult {
+func ExecuteCommandSSH(client *ssh.Client, targetOS, command string, args []string, env map[string]string, workDir string, opts ExecOptions) *ExecuteResult {
 	if strings.TrimSpace(command) == "" {
 		return &ExecuteResult{Success: false, Error: "command is empty"}
 	}
@@ -145,21 +145,21 @@ func ExecuteCommandSSH(client *ssh.Client, targetOS, command string, args []stri
 		if err != nil {
 			return &ExecuteResult{Success: false, Error: err.Error()}
 		}
-		return runSSHSession(client, line, nil, out)
+		return runSSHSession(client, line, nil, opts)
 	}
-	return runSSHSession(client, sshCommandLine(command, args, env, workDir), nil, out)
+	return runSSHSession(client, sshCommandLine(command, args, env, workDir), nil, opts)
 }
 
 // runSSHSession runs remoteCmd and streams the remote host's output into out
 // as it arrives, so a remote execution can be watched live exactly like a
 // local one.
-func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader, out OutputStream) *ExecuteResult {
+func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader, opts ExecOptions) *ExecuteResult {
 	session, err := client.NewSession()
 	if err != nil {
 		return &ExecuteResult{Success: false, Error: err.Error()}
 	}
 
-	streams := newStreamCapture(out)
+	streams := newStreamCapture(opts)
 	session.Stdin = stdin
 
 	stdout, err := session.StdoutPipe()
@@ -203,7 +203,7 @@ func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader, out Ou
 			result.Success = true
 		}
 		return result
-	case <-time.After(executionTimeout):
+	case <-timeoutChan(opts.Timeout):
 		// Close only sends a channel-close message; the readers unblock when the
 		// remote answers it, so a wedged host would keep `done` pending forever.
 		// The timeout has to return regardless, exactly as the local branch does.
@@ -212,7 +212,7 @@ func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader, out Ou
 		return &ExecuteResult{
 			Success: false,
 			Output:  stdoutText,
-			Error:   strings.TrimLeft(stderrText+"\n"+timeoutMessage(executionTimeout), "\n"),
+			Error:   strings.TrimLeft(stderrText+"\n"+timeoutMessage(opts.Timeout), "\n"),
 		}
 	}
 }

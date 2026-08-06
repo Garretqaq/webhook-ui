@@ -27,13 +27,15 @@ type LogSink interface {
 	WriteChunk(stream, chunk string)
 }
 
-// OutputStream bundles where an execution's output goes with how much of it is
-// retained, so the two stop travelling as a pair of loose parameters through
-// every execution entry point.
-type OutputStream struct {
+// ExecOptions carries the per-call settings an execution needs, so they stop
+// travelling as a growing list of loose parameters through every entry point.
+type ExecOptions struct {
 	Sink LogSink
 	// TailBytes caps each aggregated stream; 0 means unbounded.
 	TailBytes int
+	// Timeout bounds the execution; 0 means it may run indefinitely, which is
+	// the point of an asynchronous hook — nothing is holding a request open.
+	Timeout time.Duration
 }
 
 // streamCapture fans a process's two output streams into the per-stream
@@ -54,11 +56,11 @@ type streamCapture struct {
 	pending map[string][]byte
 }
 
-func newStreamCapture(out OutputStream) *streamCapture {
+func newStreamCapture(opts ExecOptions) *streamCapture {
 	return &streamCapture{
-		sink:    out.Sink,
-		stdout:  newTailBuffer(out.TailBytes),
-		stderr:  newTailBuffer(out.TailBytes),
+		sink:    opts.Sink,
+		stdout:  newTailBuffer(opts.TailBytes),
+		stderr:  newTailBuffer(opts.TailBytes),
 		pending: map[string][]byte{},
 	}
 }
@@ -148,4 +150,14 @@ func runeLenFor(lead byte) int {
 		return 4
 	}
 	return 1
+}
+
+// timeoutChan returns a channel that fires after d, or one that never fires
+// when d is not positive. A nil channel blocks forever in a select, which is
+// exactly what "no timeout" has to mean.
+func timeoutChan(d time.Duration) <-chan time.Time {
+	if d <= 0 {
+		return nil
+	}
+	return time.After(d)
 }

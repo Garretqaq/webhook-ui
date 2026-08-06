@@ -193,7 +193,7 @@ func TestExecuteScriptSSHPipesContentViaStdin(t *testing.T) {
 	defer result.Client.Close()
 
 	content := "echo hello from script"
-	execResult := ExecuteScriptSSH(result.Client, models.TargetOSLinux, "bash", content, nil, nil, "", OutputStream{})
+	execResult := ExecuteScriptSSH(result.Client, models.TargetOSLinux, "bash", content, nil, nil, "", ExecOptions{})
 	if !execResult.Success {
 		t.Fatalf("expected success, got: %s", execResult.Error)
 	}
@@ -250,7 +250,7 @@ func TestExecuteCommandSSH(t *testing.T) {
 	}
 	defer result.Client.Close()
 
-	execResult := ExecuteCommandSSH(result.Client, models.TargetOSLinux, "echo ok", nil, nil, "", OutputStream{})
+	execResult := ExecuteCommandSSH(result.Client, models.TargetOSLinux, "echo ok", nil, nil, "", ExecOptions{})
 	if !execResult.Success {
 		t.Fatalf("expected success, got: %s", execResult.Error)
 	}
@@ -260,7 +260,7 @@ func TestExecuteCommandSSH(t *testing.T) {
 }
 
 func TestExecuteCommandSSHRejectsEmptyCommand(t *testing.T) {
-	if r := ExecuteCommandSSH(nil, models.TargetOSLinux, "   ", nil, nil, "", OutputStream{}); r.Success {
+	if r := ExecuteCommandSSH(nil, models.TargetOSLinux, "   ", nil, nil, "", ExecOptions{}); r.Success {
 		t.Fatal("empty command must be rejected before dialing a session")
 	}
 }
@@ -298,7 +298,7 @@ func TestExecuteScriptSSHRejectsInvalidInterpreter(t *testing.T) {
 	}
 	defer result.Client.Close()
 
-	execResult := ExecuteScriptSSH(result.Client, models.TargetOSLinux, "bash; touch /tmp/pwn", "echo hi", nil, nil, "", OutputStream{})
+	execResult := ExecuteScriptSSH(result.Client, models.TargetOSLinux, "bash; touch /tmp/pwn", "echo hi", nil, nil, "", ExecOptions{})
 	if execResult.Success {
 		t.Fatal("expected rejection of non-enum interpreter")
 	}
@@ -351,7 +351,7 @@ func TestExecuteScriptSSHWindowsPipesPreambleAndContent(t *testing.T) {
 	defer result.Client.Close()
 
 	execResult := ExecuteScriptSSH(result.Client, models.TargetOSWindows, "powershell",
-		"Write-Output $args[0]", []string{"v1"}, map[string]string{"MY_VAR": "x"}, `D:\app`, OutputStream{})
+		"Write-Output $args[0]", []string{"v1"}, map[string]string{"MY_VAR": "x"}, `D:\app`, ExecOptions{})
 	if !execResult.Success {
 		t.Fatalf("expected success, got: %s", execResult.Error)
 	}
@@ -373,7 +373,7 @@ func TestExecuteScriptSSHRejectsInterpreterForWrongOS(t *testing.T) {
 		{models.TargetOSLinux, "powershell"},
 	}
 	for _, c := range cases {
-		if r := ExecuteScriptSSH(nil, c.targetOS, c.interpreter, "echo hi", nil, nil, "", OutputStream{}); r.Success {
+		if r := ExecuteScriptSSH(nil, c.targetOS, c.interpreter, "echo hi", nil, nil, "", ExecOptions{}); r.Success {
 			t.Errorf("%s on a %s target must be rejected before dialing", c.interpreter, c.targetOS)
 		}
 	}
@@ -437,7 +437,7 @@ func TestCmdQuoteRejectsUnquotableValues(t *testing.T) {
 }
 
 func TestExecuteCommandSSHWindowsRejectsUnquotableArg(t *testing.T) {
-	r := ExecuteCommandSSH(nil, models.TargetOSWindows, "echo", []string{`x" & calc.exe`}, nil, "", OutputStream{})
+	r := ExecuteCommandSSH(nil, models.TargetOSWindows, "echo", []string{`x" & calc.exe`}, nil, "", ExecOptions{})
 	if r.Success {
 		t.Fatal("an arg that breaks cmd.exe quoting must be rejected before dialing")
 	}
@@ -456,7 +456,7 @@ func TestExecuteCommandSSHStreamsBeforeSessionEnds(t *testing.T) {
 	done := make(chan *ExecuteResult, 1)
 	go func() {
 		done <- ExecuteCommandSSH(result.Client, models.TargetOSLinux, "SLOWTEST", nil, nil, "",
-			OutputStream{Sink: sink})
+			ExecOptions{Sink: sink})
 	}()
 
 	select {
@@ -496,7 +496,7 @@ func TestExecuteCommandSSHSanitisesNonUTF8Output(t *testing.T) {
 
 	sink := newRecordingSink()
 	execResult := ExecuteCommandSSH(result.Client, models.TargetOSLinux, "BINARYTEST", nil, nil, "",
-		OutputStream{Sink: sink})
+		ExecOptions{Sink: sink})
 
 	if !utf8.ValidString(execResult.Output) {
 		t.Errorf("aggregate holds invalid UTF-8: %q", execResult.Output)
@@ -521,7 +521,7 @@ func TestExecuteScriptSSHTailLimitAppliesToRemoteOutput(t *testing.T) {
 	// The test server echoes stdin, so the script content comes straight back.
 	content := strings.Repeat("0123456789", 20)
 	execResult := ExecuteScriptSSH(result.Client, models.TargetOSLinux, "bash", content, nil, nil, "",
-		OutputStream{TailBytes: 16})
+		ExecOptions{TailBytes: 16})
 	if !execResult.Success {
 		t.Fatalf("expected success, got: %s", execResult.Error)
 	}

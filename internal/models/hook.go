@@ -51,8 +51,13 @@ type Hook struct {
 	PassArguments   StringArray `json:"pass_arguments"`
 	PassHeaders     StringArray `json:"pass_headers"`
 	PassPayloadTo   string      `json:"pass_payload_to"`
-	CreatedAt       time.Time   `json:"created_at"`
-	UpdatedAt       time.Time   `json:"updated_at"`
+	// Async returns as soon as the execution is accepted instead of holding
+	// the request open until the hook finishes.
+	Async bool `json:"async"`
+	// TimeoutSeconds bounds one execution; 0 means no limit.
+	TimeoutSeconds int       `json:"timeout_seconds"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 func (h *Hook) Validate() error {
@@ -68,5 +73,27 @@ func (h *Hook) Validate() error {
 	if h.Command == "" && h.ScriptID == "" {
 		return errors.New("command or script is required")
 	}
+	if h.TimeoutSeconds < 0 {
+		return errors.New("timeout_seconds must be 0 (no limit) or positive")
+	}
+	if !h.Async && h.TimeoutSeconds == 0 {
+		// A synchronous hook holds the HTTP request open for as long as it
+		// runs, so an unlimited one would pin a connection forever.
+		return errors.New("only an async hook may have an unlimited timeout")
+	}
 	return nil
 }
+
+// Timeout renders TimeoutSeconds as a duration; 0 means no limit.
+func (h *Hook) Timeout() time.Duration {
+	return time.Duration(h.TimeoutSeconds) * time.Second
+}
+
+// ExecutionStatus values. queued and interrupted only occur for async hooks.
+const (
+	StatusQueued      = "queued"
+	StatusRunning     = "running"
+	StatusSuccess     = "success"
+	StatusFailed      = "failed"
+	StatusInterrupted = "interrupted"
+)

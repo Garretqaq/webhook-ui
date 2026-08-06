@@ -2,7 +2,7 @@ package database
 
 import "fmt"
 
-const schemaVersion = 9
+const schemaVersion = 10
 
 func Migrate() error {
 	return migrateTo(schemaVersion)
@@ -106,6 +106,13 @@ func migrateTo(target int) error {
 				FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
 			)`,
 			`CREATE INDEX IF NOT EXISTS idx_execution_logs_exec_seq ON execution_logs(execution_id, seq)`,
+		},
+		{ // 9 -> 10: hooks can run asynchronously, with their own time budget
+			`ALTER TABLE hooks ADD COLUMN async INTEGER NOT NULL DEFAULT 0`,
+			// 300 rather than 0 so existing hooks keep the timeout they have
+			// always had; 0 is reserved to mean "no limit".
+			`ALTER TABLE hooks ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 300`,
+			`CREATE INDEX IF NOT EXISTS idx_executions_hook_status ON executions(hook_id, status)`,
 		},
 	}
 

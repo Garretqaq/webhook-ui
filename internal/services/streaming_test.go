@@ -51,7 +51,7 @@ func TestExecuteScriptStreamsBeforeProcessExits(t *testing.T) {
 
 	done := make(chan *ExecuteResult, 1)
 	go func() {
-		done <- e.ExecuteScript("bash", "echo early; sleep 1; echo late", nil, nil, "", OutputStream{Sink: sink})
+		done <- e.ExecuteScript("bash", "echo early; sleep 1; echo late", nil, nil, "", ExecOptions{Sink: sink})
 	}()
 
 	select {
@@ -82,7 +82,7 @@ func TestExecuteScriptLabelsStderrChunks(t *testing.T) {
 	e := newTestExecutor(t)
 	sink := newRecordingSink()
 
-	result := e.ExecuteScript("bash", "echo out; echo err >&2", nil, nil, "", OutputStream{Sink: sink})
+	result := e.ExecuteScript("bash", "echo out; echo err >&2", nil, nil, "", ExecOptions{Sink: sink})
 	if !result.Success {
 		t.Fatalf("expected success, got: %s", result.Error)
 	}
@@ -102,7 +102,7 @@ func TestExecuteScriptLabelsStderrChunks(t *testing.T) {
 
 func TestExecuteScriptWithoutSinkStillAggregates(t *testing.T) {
 	e := newTestExecutor(t)
-	result := e.ExecuteScript("bash", "echo hi", nil, nil, "", OutputStream{})
+	result := e.ExecuteScript("bash", "echo hi", nil, nil, "", ExecOptions{})
 	if !result.Success {
 		t.Fatalf("expected success, got: %s", result.Error)
 	}
@@ -115,7 +115,7 @@ func TestExecuteScriptCapsAggregateAtTailLimit(t *testing.T) {
 	e := newTestExecutor(t)
 
 	result := e.ExecuteScript("bash", "for i in $(seq 1 200); do echo LINE$i; done", nil, nil, "",
-		OutputStream{TailBytes: 16})
+		ExecOptions{TailBytes: 16})
 	if !result.Success {
 		t.Fatalf("expected success, got: %s", result.Error)
 	}
@@ -129,9 +129,9 @@ func TestExecuteScriptCapsAggregateAtTailLimit(t *testing.T) {
 
 func TestRunKeepsStderrWhenKilledOnTimeout(t *testing.T) {
 	e := newTestExecutor(t)
-	e.timeout = 300 * time.Millisecond
 
-	result := e.ExecuteScript("bash", "echo out; echo diagnostic >&2; sleep 30", nil, nil, "", OutputStream{})
+	result := e.ExecuteScript("bash", "echo out; echo diagnostic >&2; sleep 30", nil, nil, "",
+		ExecOptions{Timeout: 300 * time.Millisecond})
 	if result.Success {
 		t.Fatal("a timed-out process must not report success")
 	}
@@ -148,12 +148,12 @@ func TestRunKeepsStderrWhenKilledOnTimeout(t *testing.T) {
 
 func TestRunTimeoutIsNotHeldUpByASurvivingGrandchild(t *testing.T) {
 	e := newTestExecutor(t)
-	e.timeout = 300 * time.Millisecond
 
 	// `sleep` inherits the pipes and outlives the shell it was spawned from, so
 	// waiting for EOF here would stretch the 300ms timeout out to 10 seconds.
 	start := time.Now()
-	result := e.ExecuteScript("bash", "echo out; sleep 10", nil, nil, "", OutputStream{})
+	result := e.ExecuteScript("bash", "echo out; sleep 10", nil, nil, "",
+		ExecOptions{Timeout: 300 * time.Millisecond})
 	elapsed := time.Since(start)
 
 	if result.Success {
@@ -166,7 +166,7 @@ func TestRunTimeoutIsNotHeldUpByASurvivingGrandchild(t *testing.T) {
 
 func TestStreamCaptureReassemblesRunesSplitAcrossReads(t *testing.T) {
 	sink := newRecordingSink()
-	c := newStreamCapture(OutputStream{Sink: sink})
+	c := newStreamCapture(ExecOptions{Sink: sink})
 
 	// A pipe read boundary can fall anywhere, including inside a rune.
 	const text = "中文输出"
@@ -184,7 +184,7 @@ func TestStreamCaptureReassemblesRunesSplitAcrossReads(t *testing.T) {
 }
 
 func TestStreamCaptureReplacesGenuinelyForeignBytes(t *testing.T) {
-	c := newStreamCapture(OutputStream{})
+	c := newStreamCapture(ExecOptions{})
 	c.write(StreamStdout, string([]byte{0xff, 0xfe})+"ok")
 
 	out, _ := c.result()
@@ -197,7 +197,7 @@ func TestStreamCaptureReplacesGenuinelyForeignBytes(t *testing.T) {
 }
 
 func TestStreamCaptureFlushesAStreamEndingMidRune(t *testing.T) {
-	c := newStreamCapture(OutputStream{})
+	c := newStreamCapture(ExecOptions{})
 	// Only the first two bytes of a three byte rune ever arrive.
 	c.write(StreamStdout, "中"[:2])
 

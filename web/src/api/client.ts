@@ -19,6 +19,9 @@ export interface Hook {
   pass_arguments: string[]
   pass_headers: string[]
   pass_payload_to: string
+  async: boolean
+  /** 0 means no limit; only permitted for async hooks. */
+  timeout_seconds: number
   created_at: string
   updated_at: string
 }

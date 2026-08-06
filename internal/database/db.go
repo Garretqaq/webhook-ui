@@ -16,9 +16,8 @@ func Init(dataDir string) error {
 		return fmt.Errorf("create data dir: %w", err)
 	}
 
-	dbPath := filepath.Join(dataDir, "webhook-ui.db")
 	var err error
-	DB, err = sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	DB, err = Open(filepath.Join(dataDir, "webhook-ui.db"))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -28,6 +27,23 @@ func Init(dataDir string) error {
 	}
 
 	return Migrate()
+}
+
+// Open connects to a SQLite file with the settings the application depends on.
+// Tests use it too: async executions write from their own goroutines while
+// requests are being served, and a database opened without these settings
+// fails those writes outright instead of waiting, which would make a test
+// bench disagree with production about whether the code works.
+func Open(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	if err != nil {
+		return nil, err
+	}
+	// SQLite takes one writer at a time. Letting database/sql hand out several
+	// connections turns that into SQLITE_BUSY under concurrent executions;
+	// funnelling through one connection makes them queue instead.
+	db.SetMaxOpenConns(1)
+	return db, nil
 }
 
 func Close() error {

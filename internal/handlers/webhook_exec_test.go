@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +16,7 @@ import (
 // setupExecDB gives each test a migrated database of its own.
 func setupExecDB(t *testing.T) {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "test.db"))
+	db, err := database.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +46,7 @@ func newExecTestHandler(t *testing.T) *WebhookHandler {
 	if err != nil {
 		t.Skip("sh not available")
 	}
-	return NewWebhookHandler(services.NewExecutor([]string{shPath}, t.TempDir()), 0)
+	return NewWebhookHandler(services.NewExecutor([]string{shPath}, t.TempDir()), 0, NewRunner(4, 16))
 }
 
 func TestExecuteScriptHookRunsLocallyWhenNoHost(t *testing.T) {
@@ -59,7 +58,7 @@ func TestExecuteScriptHookRunsLocallyWhenNoHost(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := h.execute(&models.Hook{ID: "h1", ScriptID: "s1"}, nil, nil, services.OutputStream{})
+	result := h.execute(&models.Hook{ID: "h1", ScriptID: "s1"}, nil, nil, services.ExecOptions{})
 	if !result.Success {
 		t.Fatalf("expected local success, got: %s", result.Error)
 	}
@@ -79,7 +78,7 @@ func TestExecuteCommandHookRunsLocallyWhenNoHost(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := h.execute(&models.Hook{ID: "h1", Command: "sh " + script}, nil, nil, services.OutputStream{})
+	result := h.execute(&models.Hook{ID: "h1", Command: "sh " + script}, nil, nil, services.ExecOptions{})
 	if !result.Success {
 		t.Fatalf("expected local success, got: %s", result.Error)
 	}
@@ -107,7 +106,7 @@ func TestExecuteRoutesToSSHWhenHookHasHost(t *testing.T) {
 	}
 	for name, hook := range cases {
 		t.Run(name, func(t *testing.T) {
-			result := h.execute(hook, nil, nil, services.OutputStream{})
+			result := h.execute(hook, nil, nil, services.ExecOptions{})
 			if result.Success {
 				t.Fatal("expected the SSH dial to fail, but execution succeeded — it ran locally")
 			}

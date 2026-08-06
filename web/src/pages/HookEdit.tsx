@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Form, Input, Select, Button, Card, message, Space, Radio } from 'antd'
+import { Form, Input, InputNumber, Select, Button, Card, message, Space, Radio, Switch } from 'antd'
 import { useNavigate, useParams } from 'react-router-dom'
 import { hookApi, scriptApi, sshHostApi } from '../api/client'
 import type { Script, SSHHost } from '../api/client'
@@ -82,6 +82,8 @@ export default function HookEdit() {
           pass_payload_to: '',
           exec_mode: 'command',
           exec_location: 'local',
+          async: false,
+          timeout_seconds: 300,
         }}
       >
         {!isNew && (
@@ -169,6 +171,43 @@ export default function HookEdit() {
           extra="留空则使用默认目录。SSH 执行时会先 cd 到该目录，目录不存在则执行失败"
         >
           <Input placeholder="/path/to/workdir (可选)" />
+        </Form.Item>
+
+        <Form.Item
+          name="async"
+          label="异步执行"
+          valuePropName="checked"
+          extra="开启后触发立即返回 202 和 execution_id，不等脚本跑完；日志在执行日志页实时查看。同一 Hook 上一次未结束时再次触发会返回 409"
+        >
+          <Switch />
+        </Form.Item>
+
+        <Form.Item
+          noStyle
+          shouldUpdate={(prev, cur) => prev.async !== cur.async}
+        >
+          {({ getFieldValue }) => (
+            <Form.Item
+              name="timeout_seconds"
+              label="超时（秒）"
+              rules={[
+                { required: true, message: '请输入超时秒数' },
+                {
+                  validator: (_, value) =>
+                    getFieldValue('async') || value > 0
+                      ? Promise.resolve()
+                      : Promise.reject(new Error('同步 Hook 会一直占住 HTTP 连接，不能设为不限时')),
+                },
+              ]}
+              extra={
+                getFieldValue('async')
+                  ? '0 表示不限时。长任务填实际需要的秒数，例如 2 小时填 7200'
+                  : '同步 Hook 必须有上限，否则请求会被一直挂住'
+              }
+            >
+              <InputNumber min={0} style={{ width: 200 }} />
+            </Form.Item>
+          )}
         </Form.Item>
 
         <Form.Item name="response_message" label="成功响应消息">

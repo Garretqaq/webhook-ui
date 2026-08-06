@@ -12,23 +12,23 @@ import (
 )
 
 // runScript executes a script locally or over SSH depending on sshHostID.
-func runScript(executor *services.Executor, interpreter, content, sshHostID string, args []string, env map[string]string, workDir string, out services.OutputStream) *services.ExecuteResult {
+func runScript(executor *services.Executor, interpreter, content, sshHostID string, args []string, env map[string]string, workDir string, opts services.ExecOptions) *services.ExecuteResult {
 	if sshHostID == "" {
-		return executor.ExecuteScript(interpreter, content, args, env, workDir, out)
+		return executor.ExecuteScript(interpreter, content, args, env, workDir, opts)
 	}
 	return runRemote(sshHostID, func(client *ssh.Client, host *models.SSHHost) *services.ExecuteResult {
-		return services.ExecuteScriptSSH(client, host.TargetOS, interpreter, content, args, env, workDir, out)
+		return services.ExecuteScriptSSH(client, host.TargetOS, interpreter, content, args, env, workDir, opts)
 	})
 }
 
 // runCommand executes a hook's free-form command locally (whitelist enforced)
 // or over SSH (whitelist does not apply — it describes the local machine).
-func runCommand(executor *services.Executor, hook *models.Hook, args []string, env map[string]string, out services.OutputStream) *services.ExecuteResult {
+func runCommand(executor *services.Executor, hook *models.Hook, args []string, env map[string]string, opts services.ExecOptions) *services.ExecuteResult {
 	if hook.SSHHostID == "" {
-		return executor.Execute(hook, env, args, out)
+		return executor.Execute(hook, env, args, opts)
 	}
 	return runRemote(hook.SSHHostID, func(client *ssh.Client, host *models.SSHHost) *services.ExecuteResult {
-		return services.ExecuteCommandSSH(client, host.TargetOS, hook.Command, args, env, hook.WorkingDir, out)
+		return services.ExecuteCommandSSH(client, host.TargetOS, hook.Command, args, env, hook.WorkingDir, opts)
 	})
 }
 

@@ -11,6 +11,8 @@ const statusColors: Record<string, string> = {
   success: 'green',
   failed: 'red',
   running: 'blue',
+  queued: 'gold',
+  interrupted: 'orange',
 }
 
 export default function ExecutionLogs() {
