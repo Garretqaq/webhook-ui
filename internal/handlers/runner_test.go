@@ -10,12 +10,13 @@ import (
 func TestRunnerRejectsASecondExecutionOfTheSameHook(t *testing.T) {
 	r := NewRunner(4, 10)
 
-	release, err := r.Admit("h1", 1)
+	slot, err := r.Admit("h1")
 	if err != nil {
 		t.Fatal(err)
 	}
+	slot.SetExecution(1)
 
-	_, err = r.Admit("h1", 2)
+	_, err = r.Admit("h1")
 	if !errors.Is(err, ErrHookAlreadyRunning) {
 		t.Fatalf("second trigger of a busy hook must be refused, got %v", err)
 	}
@@ -25,12 +26,12 @@ func TestRunnerRejectsASecondExecutionOfTheSameHook(t *testing.T) {
 	}
 
 	// A different hook is unaffected.
-	if _, err := r.Admit("h2", 3); err != nil {
+	if _, err := r.Admit("h2"); err != nil {
 		t.Errorf("a different hook must still be admitted, got %v", err)
 	}
 
-	release()
-	if _, err := r.Admit("h1", 4); err != nil {
+	slot.Release()
+	if _, err := r.Admit("h1"); err != nil {
 		t.Errorf("the hook must be admissible again once released, got %v", err)
 	}
 }
@@ -40,11 +41,11 @@ func TestRunnerRefusesBeyondSlotsPlusQueue(t *testing.T) {
 	r := NewRunner(1, 2)
 
 	for i := 1; i <= 3; i++ {
-		if _, err := r.Admit("h"+string(rune('0'+i)), int64(i)); err != nil {
+		if _, err := r.Admit("h" + string(rune('0'+i))); err != nil {
 			t.Fatalf("admission %d should fit within slots+queue, got %v", i, err)
 		}
 	}
-	if _, err := r.Admit("h4", 4); !errors.Is(err, ErrQueueFull) {
+	if _, err := r.Admit("h4"); !errors.Is(err, ErrQueueFull) {
 		t.Fatalf("the fourth must be refused, got %v", err)
 	}
 }
@@ -53,10 +54,10 @@ func TestRunnerAdmissionDoesNotDependOnScheduling(t *testing.T) {
 	// With no queue, exactly one execution may be in flight — whether or not
 	// its goroutine has reached Start yet.
 	r := NewRunner(1, 0)
-	if _, err := r.Admit("h1", 1); err != nil {
+	if _, err := r.Admit("h1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Admit("h2", 2); !errors.Is(err, ErrQueueFull) {
+	if _, err := r.Admit("h2"); !errors.Is(err, ErrQueueFull) {
 		t.Fatalf("a second execution must be refused with no queue configured, got %v", err)
 	}
 }
@@ -70,14 +71,14 @@ func TestRunnerCapsConcurrentStarts(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for i := 0; i < 6; i++ {
-		release, err := r.Admit(string(rune('a'+i)), int64(i))
+		slot, err := r.Admit(string(rune('a' + i)))
 		if err != nil {
 			t.Fatal(err)
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			defer release()
+			defer slot.Release()
 			r.Start()
 			defer r.Finish()
 
@@ -110,12 +111,12 @@ func TestRunnerQueueDrainsAsSlotsFree(t *testing.T) {
 	// completes, rather than the queue counter leaking.
 	r := NewRunner(1, 3)
 	for i := 0; i < 6; i++ {
-		release, err := r.Admit("h1", int64(i))
+		slot, err := r.Admit("h1")
 		if err != nil {
 			t.Fatalf("admission %d failed: %v", i, err)
 		}
 		r.Start()
 		r.Finish()
-		release()
+		slot.Release()
 	}
 }

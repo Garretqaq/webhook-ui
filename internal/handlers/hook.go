@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/songguangzhi/webhook-ui/internal/database"
 	"github.com/songguangzhi/webhook-ui/internal/models"
+	"github.com/songguangzhi/webhook-ui/internal/services"
 )
 
 type HookHandler struct{}
@@ -108,6 +109,7 @@ func (h *HookHandler) Create(c *gin.Context) {
 		hook.HMACAlgorithm = "sha256"
 	}
 
+	applyTimeoutDefault(&hook)
 	if err := hook.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -144,6 +146,7 @@ func (h *HookHandler) Update(c *gin.Context) {
 	}
 
 	hook.ID = id
+	applyTimeoutDefault(&hook)
 	if err := hook.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -208,4 +211,14 @@ func checkSSHHostExists(sshHostID string) error {
 		return fmt.Errorf("ssh host not found: %s", sshHostID)
 	}
 	return nil
+}
+
+// applyTimeoutDefault fills in the synchronous default. A client that predates
+// the field sends nothing, which arrives as 0 — and 0 means "no limit", which
+// a synchronous hook may not have. Rejecting it would break every existing
+// integration, so it becomes the timeout those hooks already had.
+func applyTimeoutDefault(hook *models.Hook) {
+	if !hook.Async && hook.TimeoutSeconds == 0 {
+		hook.TimeoutSeconds = int(services.DefaultTimeout.Seconds())
+	}
 }

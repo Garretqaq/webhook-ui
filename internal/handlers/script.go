@@ -191,14 +191,23 @@ func (h *ScriptHandler) Test(c *gin.Context) {
 		return
 	}
 
-	// No sink: a test run has no execution row to attach chunks to, so its
-	// output is only aggregated onto the response — still capped, or a runaway
-	// test script would be answered with everything it printed.
 	result := runScript(h.executor, req.Interpreter, req.Content, req.SSHHostID, req.Args, nil, "",
-		services.ExecOptions{TailBytes: h.logTailBytes})
+		h.execOptions())
 	c.JSON(http.StatusOK, gin.H{
 		"success": result.Success,
 		"output":  result.Output,
 		"error":   result.Error,
 	})
+}
+
+// execOptions renders the settings for a test run. There is no execution row
+// to attach chunks to, so the output is only aggregated onto the response —
+// capped, or a runaway script would be answered with everything it printed.
+// The timeout is not optional: this endpoint answers a request that is waiting
+// on it, so an unlimited run would pin the connection open forever.
+func (h *ScriptHandler) execOptions() services.ExecOptions {
+	return services.ExecOptions{
+		TailBytes: h.logTailBytes,
+		Timeout:   services.DefaultTimeout,
+	}
 }

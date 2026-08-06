@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/songguangzhi/webhook-ui/internal/database"
@@ -163,4 +164,20 @@ func (h *ExecutionHandler) Get(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, exec)
+}
+
+// SweepInterruptedExecutions retires executions the previous process was still
+// tracking. Nothing survives a restart — the goroutines are gone and the child
+// processes are unreachable — so leaving them as running would hang a spinner
+// in the UI forever. The status says only that this service stopped following
+// them; a detached remote process may well still be alive.
+func SweepInterruptedExecutions() (int64, error) {
+	result, err := database.DB.Exec(`
+		UPDATE executions SET status = ?, finished_at = ?
+		WHERE status IN (?, ?)
+	`, models.StatusInterrupted, time.Now(), models.StatusRunning, models.StatusQueued)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

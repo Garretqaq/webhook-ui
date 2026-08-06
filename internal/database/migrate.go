@@ -112,7 +112,6 @@ func migrateTo(target int) error {
 			// 300 rather than 0 so existing hooks keep the timeout they have
 			// always had; 0 is reserved to mean "no limit".
 			`ALTER TABLE hooks ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 300`,
-			`CREATE INDEX IF NOT EXISTS idx_executions_hook_status ON executions(hook_id, status)`,
 		},
 	}
 

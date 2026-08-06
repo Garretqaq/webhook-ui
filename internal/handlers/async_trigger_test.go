@@ -124,6 +124,13 @@ func TestAsyncHookRefusesAConcurrentTriggerWith409(t *testing.T) {
 	if got := int64(body["running_execution_id"].(float64)); got != firstID {
 		t.Errorf("the refusal named execution %d, want the running one %d", got, firstID)
 	}
+
+	// And the refusal itself is not recorded as an execution.
+	var rows int
+	database.DB.QueryRow("SELECT COUNT(*) FROM executions WHERE hook_id = 'h-busy'").Scan(&rows)
+	if rows != 1 {
+		t.Errorf("%d execution rows for the hook; only the one that actually ran should exist", rows)
+	}
 }
 
 func TestAsyncTriggerRefusedByAFullQueueDoesNotStrandTheRow(t *testing.T) {
@@ -138,16 +145,17 @@ func TestAsyncTriggerRefusedByAFullQueueDoesNotStrandTheRow(t *testing.T) {
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429; body %s", w.Code, w.Body.String())
 	}
-	// The row is inserted before admission is decided, so a refusal has to
-	// retire it — otherwise it sits queued forever with nothing to run it.
-	var stranded int
+	// Admission is decided before anything is recorded, so a refused trigger
+	// leaves no row at all — a caller retrying against a busy service would
+	// otherwise fill the execution log with runs that never happened.
+	var recorded int
 	if err := database.DB.QueryRow(
-		"SELECT COUNT(*) FROM executions WHERE hook_id = 'h-b' AND status = ?", models.StatusQueued,
-	).Scan(&stranded); err != nil {
+		"SELECT COUNT(*) FROM executions WHERE hook_id = 'h-b'",
+	).Scan(&recorded); err != nil {
 		t.Fatal(err)
 	}
-	if stranded != 0 {
-		t.Errorf("%d refused execution(s) left queued forever", stranded)
+	if recorded != 0 {
+		t.Errorf("a refused trigger recorded %d execution(s); it should record none", recorded)
 	}
 	if body["error"] == nil {
 		t.Error("the refusal should say why")
@@ -220,5 +228,82 @@ func TestSweepRetiresExecutionsLeftBehindByARestart(t *testing.T) {
 	}
 	if unfinished != 1 {
 		t.Errorf("%d executions still lack finished_at; only the pre-existing success row should", unfinished)
+	}
+}
+
+func TestSyncHookDefaultsItsTimeoutInsteadOfBeingRejected(t *testing.T) {
+	// A client written before the field exists sends nothing, which arrives as
+	// 0 — and 0 means no limit, which a sync hook may not have. Rejecting it
+	// would break every existing integration.
+	hook := models.Hook{ID: "h1", Name: "legacy", Command: "echo hi"}
+	applyTimeoutDefault(&hook)
+
+	if err := hook.Validate(); err != nil {
+		t.Fatalf("a sync hook sending no timeout must still validate, got %v", err)
+	}
+	if hook.TimeoutSeconds != 300 {
+		t.Errorf("TimeoutSeconds = %d, want the 5 minute default it always had", hook.TimeoutSeconds)
+	}
+
+	// An async hook keeps its unlimited setting.
+	async := models.Hook{ID: "h2", Name: "long", Command: "echo hi", Async: true}
+	applyTimeoutDefault(&async)
+	if async.TimeoutSeconds != 0 {
+		t.Errorf("an async hook's 0 must survive as 'no limit', got %d", async.TimeoutSeconds)
+	}
+}
+
+func TestScriptTestRunStaysBounded(t *testing.T) {
+	// The script tester answers a request that is waiting on it, so it must
+	// never inherit the unlimited run async hooks are allowed. A zero Timeout
+	// reaches the executor as "no limit" and hangs the request forever.
+	opts := (&ScriptHandler{logTailBytes: 1024}).execOptions()
+	if opts.Timeout <= 0 {
+		t.Errorf("Timeout = %s; a synchronous endpoint must be bounded", opts.Timeout)
+	}
+	if opts.TailBytes != 1024 {
+		t.Errorf("TailBytes = %d, want the configured cap", opts.TailBytes)
+	}
+}
+
+func TestAsyncExecutionPanicDoesNotTakeTheProcessDown(t *testing.T) {
+	setupExecDB(t)
+	runner := NewRunner(2, 8)
+	t.Cleanup(runner.WaitIdle)
+
+	execID := startedExecution(t)
+	slot, err := runner.Admit("h-panic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot.SetExecution(execID)
+
+	h := &WebhookHandler{runner: runner}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer slot.Release()
+		defer func() {
+			if r := recover(); r != nil {
+				h.logExecutionEnd(execID, models.StatusFailed, "", "execution panicked")
+			}
+		}()
+		runner.Start()
+		defer runner.Finish()
+		panic("boom")
+	}()
+
+	<-done
+	// Surviving to here is the assertion: an unrecovered panic on this stack
+	// would have killed the test binary, not failed the test.
+	if got := executionStatus(t, execID); got != models.StatusFailed {
+		t.Errorf("status = %q, want the execution retired as failed", got)
+	}
+	// The slot must be back, or one panic would wedge the hook forever.
+	readmitted, err := runner.Admit("h-panic")
+	if err != nil {
+		t.Errorf("the slot was not released after the panic: %v", err)
+	} else {
+		readmitted.Release()
 	}
 }

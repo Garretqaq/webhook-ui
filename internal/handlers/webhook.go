@@ -211,32 +211,43 @@ func (h *WebhookHandler) execOptions(hook *models.Hook, execID int64) services.E
 // triggerAsync accepts the execution and answers immediately with something
 // the caller can poll, instead of holding the request open for the whole run.
 func (h *WebhookHandler) triggerAsync(c *gin.Context, hook *models.Hook, env map[string]string, args []string) {
-	execID := h.logExecutionStart(hook.ID, c.ClientIP(), execTarget(hook.SSHHostID), models.StatusQueued)
-	if execID == 0 {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record execution"})
-		return
-	}
-
-	release, err := h.runner.Admit(hook.ID, execID)
+	// Admission comes first so a refused trigger records nothing at all.
+	slot, err := h.runner.Admit(hook.ID)
 	if err != nil {
-		// The row was already inserted, so retire it rather than leave a queued
-		// execution nothing will ever pick up.
-		h.logExecutionEnd(execID, models.StatusFailed, "", err.Error())
-
 		var busy *HookBusyError
 		if errors.As(err, &busy) {
-			c.JSON(http.StatusConflict, gin.H{
-				"error":                "hook is already running",
-				"running_execution_id": busy.ExecutionID,
-			})
+			body := gin.H{"error": "hook is already running"}
+			if busy.ExecutionID != 0 {
+				body["running_execution_id"] = busy.ExecutionID
+			}
+			c.JSON(http.StatusConflict, body)
 			return
 		}
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
 		return
 	}
 
+	execID := h.logExecutionStart(hook.ID, c.ClientIP(), execTarget(hook.SSHHostID), models.StatusQueued)
+	if execID == 0 {
+		slot.Release()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record execution"})
+		return
+	}
+	slot.SetExecution(execID)
+
 	go func() {
-		defer release()
+		defer slot.Release()
+		// The request has already been answered, so nothing is left to turn a
+		// panic into a response — and unlike the synchronous path there is no
+		// gin recovery middleware on this stack to stop it taking the process
+		// down with it.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("execution %d panicked: %v", execID, r)
+				h.logExecutionEnd(execID, models.StatusFailed, "", fmt.Sprintf("execution panicked: %v", r))
+			}
+		}()
+
 		h.runner.Start()
 		defer h.runner.Finish()
 
