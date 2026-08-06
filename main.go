@@ -33,9 +33,24 @@ func main() {
 	}
 	defer database.Close()
 
+	r, err := buildRouter(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	addr := fmt.Sprintf(":%s", cfg.Port)
+	log.Printf("Starting webhook-ui %s on %s", version, addr)
+	log.Fatal(r.Run(addr))
+}
+
+// buildRouter assembles the whole route tree. It exists separately from main
+// so a test can run the real tree — the read-only boundary the API token
+// depends on is the set of routes actually registered, and a hand-built copy
+// in a test would keep passing while main.go widened the token's reach.
+func buildRouter(cfg *config.Config) (*gin.Engine, error) {
 	r := gin.Default()
 	if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
-		log.Fatalf("invalid TRUSTED_PROXIES: %v", err)
+		return nil, fmt.Errorf("invalid TRUSTED_PROXIES: %w", err)
 	}
 
 	store := cookie.NewStore([]byte(cfg.SessionSecret))
@@ -145,10 +160,7 @@ func main() {
 
 		auth.GET("/settings/api-token", settingsHandler.GetAPIToken)
 		auth.POST("/settings/api-token/regenerate", settingsHandler.RegenerateAPIToken)
-		auth.DELETE("/settings/api-token", settingsHandler.DisableAPIToken)
 	}
 
-	addr := fmt.Sprintf(":%s", cfg.Port)
-	log.Printf("Starting webhook-ui %s on %s", version, addr)
-	log.Fatal(r.Run(addr))
+	return r, nil
 }

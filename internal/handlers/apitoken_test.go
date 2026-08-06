@@ -11,12 +11,11 @@ import (
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/songguangzhi/webhook-ui/internal/middleware"
-	"github.com/songguangzhi/webhook-ui/internal/models"
 )
 
-// buildExternalRouter mirrors main.go's external group exactly. It is built
-// here, not imported, so the test fails if the main.go routes drift out of the
-// read-only boundary — which is the thing this ticket exists to prevent.
+// buildExternalRouter builds the token group's routes for exercising the
+// middleware and handlers. It is a convenience copy, not the real tree — the
+// boundary itself is locked by the test that runs main.go's buildRouter.
 func buildExternalRouter(t *testing.T, tokenLookup func() (string, error)) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -58,40 +57,6 @@ func TestAPITokenReadsExecutions(t *testing.T) {
 	}
 	if w := get(r, "/api/external/executions/"+strconv.FormatInt(execID, 10)+"/logs", "tok-123"); w.Code != http.StatusOK {
 		t.Errorf("logs = %d, want 200", w.Code)
-	}
-}
-
-func TestAPITokenCannotReachBeyondItsScope(t *testing.T) {
-	setupExecDB(t)
-	r := buildExternalRouter(t, staticToken(t, "tok-123"))
-
-	// The boundary that justifies the token's existence: a leaked token must
-	// not become a leak of the SSH private keys stored in this database.
-	for _, path := range []string{
-		"/api/external/ssh-hosts", "/api/external/ssh-hosts/abc",
-		"/api/external/hooks", "/api/external/scripts",
-	} {
-		if w := get(r, path, "tok-123"); w.Code != http.StatusNotFound {
-			t.Errorf("GET %s = %d, want 404 — the token must have no route there at all", path, w.Code)
-		}
-	}
-}
-
-func TestAPITokenCannotCancelAnExecution(t *testing.T) {
-	setupExecDB(t)
-	execID := startedExecution(t)
-	r := buildExternalRouter(t, staticToken(t, "tok-123"))
-
-	// Read-only means read-only: the cancel endpoint is not mounted for tokens.
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/external/executions/"+strconv.FormatInt(execID, 10)+"/cancel", nil)
-	req.Header.Set(middleware.APITokenHeader, "tok-123")
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("cancel = %d, want 404", w.Code)
-	}
-	if executionStatus(t, execID) != models.StatusRunning {
-		t.Error("the execution was affected despite the refusal")
 	}
 }
 

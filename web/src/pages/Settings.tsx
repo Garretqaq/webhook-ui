@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Card, Button, Typography, message, Space, Alert, Popconfirm, Input } from 'antd'
-import { ReloadOutlined, CopyOutlined, StopOutlined } from '@ant-design/icons'
+import { ReloadOutlined, CopyOutlined } from '@ant-design/icons'
 import { settingsApi } from '../api/client'
 
 const { Paragraph, Text } = Typography
@@ -38,19 +38,6 @@ export default function Settings() {
     }
   }
 
-  const disable = async () => {
-    setLoading(true)
-    try {
-      await settingsApi.disableAPIToken()
-      setToken('')
-      setConfigured(false)
-      message.success('已停用外部访问')
-    } catch {
-      message.error('操作失败')
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const copy = async () => {
     try {
@@ -94,14 +81,6 @@ export default function Settings() {
               >
                 <Button icon={<ReloadOutlined />} loading={loading}>
                   重新生成
-                </Button>
-              </Popconfirm>
-              <Popconfirm
-                title="停用后外部调用全部失败，直到重新生成。确定?"
-                onConfirm={disable}
-              >
-                <Button danger icon={<StopOutlined />} loading={loading}>
-                  停用
                 </Button>
               </Popconfirm>
             </Space>

@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/songguangzhi/webhook-ui/internal/database"
 )
 
 // SettingsHandler manages the single-instance settings. Today that is the
@@ -50,14 +52,25 @@ func (h *SettingsHandler) RegenerateAPIToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"configured": true, "token": token})
 }
 
-// DisableAPIToken clears it, which switches external access off until a new
-// one is generated.
-func (h *SettingsHandler) DisableAPIToken(c *gin.Context) {
-	if err := setSetting(settingKeyAPIToken, ""); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+// settingKeyAPIToken is the settings row that holds the external access token.
+const settingKeyAPIToken = "api_token"
+
+// getSetting returns the value for key, or empty when unset.
+func getSetting(key string) (string, error) {
+	var value string
+	err := database.DB.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
 	}
-	c.JSON(http.StatusOK, gin.H{"configured": false, "token": ""})
+	return value, err
+}
+
+func setSetting(key, value string) error {
+	_, err := database.DB.Exec(`
+		INSERT INTO settings (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, key, value)
+	return err
 }
 
 // APIToken resolves the configured token, for the token middleware to compare
