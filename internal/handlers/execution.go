@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -235,44 +234,22 @@ func (h *ExecutionHandler) Cancel(c *gin.Context) {
 //
 // Only finished rows are touched; an old execution still marked running is
 // either genuinely in flight or left behind by a crash, and neither should be
-// silently deleted by a retention sweep.
+// silently deleted by a retention sweep. Both DELETEs are written as
+// subqueries rather than an IN list of collected ids: the first sweep of a
+// deployment that never cleaned up faces the whole backlog at once, and a
+// parameter list long enough to trip SQLite's variable limit would fail
+// loudly every day while deleting nothing.
 func CleanupOldExecutions(cutoff time.Time) (int64, error) {
-	ids, err := database.DB.Query(`
-		SELECT id FROM executions
-		WHERE finished_at IS NOT NULL AND started_at < ?
+	if _, err := database.DB.Exec(`
+		DELETE FROM execution_logs WHERE execution_id IN (
+			SELECT id FROM executions WHERE finished_at IS NOT NULL AND started_at < ?
+		)
+	`, cutoff); err != nil {
+		return 0, err
+	}
+	result, err := database.DB.Exec(`
+		DELETE FROM executions WHERE finished_at IS NOT NULL AND started_at < ?
 	`, cutoff)
-	if err != nil {
-		return 0, err
-	}
-	var toDelete []int64
-	for ids.Next() {
-		var id int64
-		if err := ids.Scan(&id); err != nil {
-			ids.Close()
-			return 0, err
-		}
-		toDelete = append(toDelete, id)
-	}
-	ids.Close()
-	if len(toDelete) == 0 {
-		return 0, nil
-	}
-
-	marks := strings.Repeat("?,", len(toDelete))
-	marks = marks[:len(marks)-1]
-	args := make([]interface{}, len(toDelete))
-	for i, id := range toDelete {
-		args[i] = id
-	}
-
-	if _, err := database.DB.Exec(
-		"DELETE FROM execution_logs WHERE execution_id IN ("+marks+")", args...,
-	); err != nil {
-		return 0, err
-	}
-	result, err := database.DB.Exec(
-		"DELETE FROM executions WHERE id IN ("+marks+")", args...,
-	)
 	if err != nil {
 		return 0, err
 	}

@@ -9,9 +9,14 @@ import (
 // days <= 0 disables it: no goroutine is started and nothing is ever deleted.
 // It returns a stop function; main ignores it today since the process simply
 // exits, but the sweep must be stoppable for its own tests not to outlive them.
+// A nil clock means wall time; tests inject a fake one to advance the sweep
+// by hand.
 func StartRetentionSweep(days int, clock retentionClock) func() {
 	if days <= 0 {
 		return func() {}
+	}
+	if clock == nil {
+		clock = realClock{}
 	}
 
 	stop := make(chan struct{})
@@ -50,8 +55,3 @@ type realClock struct{}
 
 func (realClock) Now() time.Time                         { return time.Now() }
 func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
-
-// StartRetentionSweepDefault wires the sweep to wall time.
-func StartRetentionSweepDefault(days int) func() {
-	return StartRetentionSweep(days, realClock{})
-}

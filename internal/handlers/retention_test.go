@@ -136,3 +136,34 @@ func count(t *testing.T, query string, args ...interface{}) int {
 	}
 	return n
 }
+
+func TestCleanupHandlesABacklogLargerThanTheVariableLimit(t *testing.T) {
+	setupExecDB(t)
+	old := time.Now().AddDate(0, 0, -40)
+
+	// Far beyond SQLite's ~32k host-variable limit, which an IN-list of
+	// collected ids would trip on — and the very first sweep of a deployment
+	// that never cleaned up faces exactly this.
+	const backlog = 33000
+	stmt, err := database.DB.Prepare(`
+		INSERT INTO executions (hook_id, trigger_source, status, started_at, finished_at)
+		VALUES ('h1', 'test', 'success', ?, ?)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < backlog; i++ {
+		if _, err := stmt.Exec(old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stmt.Close()
+
+	n, err := CleanupOldExecutions(time.Now().AddDate(0, 0, -30))
+	if err != nil {
+		t.Fatalf("the sweep failed at backlog scale: %v", err)
+	}
+	if n != backlog {
+		t.Errorf("removed %d of %d", n, backlog)
+	}
+}

@@ -106,7 +106,7 @@ func buildRouter(cfg *config.Config) (*gin.Engine, error) {
 
 	runner := handlers.NewRunner(cfg.MaxConcurrentExecutions, cfg.MaxQueuedExecutions)
 	cancels := handlers.NewCancelRegistry()
-	handlers.StartRetentionSweepDefault(cfg.RetentionDays)
+	handlers.StartRetentionSweep(cfg.RetentionDays, nil)
 	webhookHandler := handlers.NewWebhookHandler(executor, cfg.LogTailBytes, runner, cancels)
 	executionHandler := handlers.NewExecutionHandler(cancels)
 	scriptHandler := handlers.NewScriptHandler(executor, cfg.LogTailBytes)
