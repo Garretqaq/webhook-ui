@@ -124,3 +124,40 @@ func TestExecuteScriptCapsAggregateAtTailLimit(t *testing.T) {
 		t.Errorf("the tail must be what survives, got %q", result.Output)
 	}
 }
+
+func TestRunKeepsStderrWhenKilledOnTimeout(t *testing.T) {
+	e := newTestExecutor(t)
+	e.timeout = 300 * time.Millisecond
+
+	result := e.ExecuteScript("bash", "echo out; echo diagnostic >&2; sleep 30", nil, nil, "", nil)
+	if result.Success {
+		t.Fatal("a timed-out process must not report success")
+	}
+	if !strings.Contains(result.Error, "execution timeout") {
+		t.Errorf("the timeout notice is missing: %q", result.Error)
+	}
+	if !strings.Contains(result.Output, "out") {
+		t.Errorf("stdout captured before the kill was lost: %q", result.Output)
+	}
+	if !strings.Contains(result.Error, "diagnostic") {
+		t.Errorf("stderr captured before the kill was lost: %q", result.Error)
+	}
+}
+
+func TestRunTimeoutIsNotHeldUpByASurvivingGrandchild(t *testing.T) {
+	e := newTestExecutor(t)
+	e.timeout = 300 * time.Millisecond
+
+	// `sleep` inherits the pipes and outlives the shell it was spawned from, so
+	// waiting for EOF here would stretch the 300ms timeout out to 10 seconds.
+	start := time.Now()
+	result := e.ExecuteScript("bash", "echo out; sleep 10", nil, nil, "", nil)
+	elapsed := time.Since(start)
+
+	if result.Success {
+		t.Fatal("a timed-out execution must not report success")
+	}
+	if elapsed > 3*time.Second {
+		t.Errorf("timeout took %s; a surviving grandchild must not hold the call open", elapsed)
+	}
+}

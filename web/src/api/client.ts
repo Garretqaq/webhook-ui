@@ -53,6 +53,8 @@ export interface ExecutionLogs {
   next_seq: number
   /** Lowest seq still stored. A cursor below it means chunks were rolled off. */
   oldest_seq: number
+  /** More chunks are already waiting past next_seq; poll again without delay. */
+  has_more: boolean
   status: string
   finished: boolean
 }

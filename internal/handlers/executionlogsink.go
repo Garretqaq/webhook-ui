@@ -29,10 +29,6 @@ func newExecutionLogSink(execID int64, limitBytes int) *executionLogSink {
 }
 
 func (s *executionLogSink) WriteChunk(stream, chunk string) {
-	if s.execID == 0 {
-		return // the execution row failed to insert; nothing to attach logs to
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -70,8 +66,11 @@ func (s *executionLogSink) trim() {
 	}
 }
 
-// sinkFor returns a sink for a real execution row, or nil when there is none
-// to attach to — services.Executor treats a nil sink as "aggregate only".
+// sinkFor returns a sink for a real execution row, or a nil interface when
+// the execution row failed to insert and there is nothing to attach logs to;
+// services.Executor treats a nil sink as "aggregate only". Returning the
+// untyped nil here is the point — handing back a nil *executionLogSink would
+// produce a non-nil interface and the executor would call through it.
 func sinkFor(execID int64, limitBytes int) services.LogSink {
 	if execID == 0 {
 		return nil

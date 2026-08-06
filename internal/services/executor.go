@@ -20,6 +20,9 @@ type Executor struct {
 	tmpDir          string
 	// logTailBytes caps each aggregated stream; 0 means unbounded.
 	logTailBytes int
+	// timeout bounds a single execution. A field rather than a constant so
+	// tests can reach the timeout branch without waiting for it.
+	timeout time.Duration
 }
 
 func NewExecutor(allowedCommands []string, dataDir string, logTailBytes int) *Executor {
@@ -27,6 +30,7 @@ func NewExecutor(allowedCommands []string, dataDir string, logTailBytes int) *Ex
 		allowedCommands: allowedCommands,
 		tmpDir:          filepath.Join(dataDir, "tmp"),
 		logTailBytes:    logTailBytes,
+		timeout:         executionTimeout,
 	}
 }
 
@@ -152,6 +156,11 @@ func applyEnv(cmd *exec.Cmd, env map[string]string) {
 	}
 }
 
+// timeoutMessage is derived from the timeout itself so the two cannot drift.
+func (e *Executor) timeoutMessage() string {
+	return fmt.Sprintf("execution timeout (%s)", e.timeout)
+}
+
 // run starts cmd and streams both of its output streams into capture until it
 // exits. Output reaches the sink while the process is still running, which is
 // what lets a long execution be watched live instead of only after it ends.
@@ -176,8 +185,6 @@ func (e *Executor) run(cmd *exec.Cmd, sink LogSink) *ExecuteResult {
 	go pumpStream(&readers, capture, StreamStdout, stdout)
 	go pumpStream(&readers, capture, StreamStderr, stderr)
 
-	// Both pipes reach EOF when the process dies — including when it is killed
-	// on timeout — so waiting on the readers first cannot outlive the process.
 	done := make(chan error, 1)
 	go func() {
 		readers.Wait()
@@ -197,14 +204,22 @@ func (e *Executor) run(cmd *exec.Cmd, sink LogSink) *ExecuteResult {
 			result.Success = true
 		}
 		return result
-	case <-time.After(executionTimeout):
+	case <-time.After(e.timeout):
+		// Kill only reaches the direct child. Anything it spawned inherits the
+		// pipes and can hold them open long past the kill, so `done` — which
+		// waits for both readers to see EOF — is not something the timeout can
+		// afford to block on, or the timeout would not bound anything. Killing
+		// the whole process group is what actually reaps the descendants.
 		cmd.Process.Kill()
-		<-done
-		out, _ := capture.result()
+
+		// capture is mutex-guarded, so snapshotting it while the orphaned
+		// readers may still be writing is safe; they exit on their own once
+		// the last descendant closes the pipes.
+		out, errOut := capture.result()
 		return &ExecuteResult{
 			Success: false,
 			Output:  out,
-			Error:   "execution timeout (5 minutes)",
+			Error:   strings.TrimLeft(errOut+"\n"+e.timeoutMessage(), "\n"),
 		}
 	}
 }

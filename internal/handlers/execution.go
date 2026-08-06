@@ -119,10 +119,18 @@ func (h *ExecutionHandler) Logs(c *gin.Context) {
 		"SELECT MIN(seq) FROM execution_logs WHERE execution_id = ?", id,
 	).Scan(&oldestSeq)
 
+	// A client that stops polling on finished alone would never see the rest of
+	// a backlog longer than one page, so say outright whether more is waiting.
+	var hasMore bool
+	database.DB.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM execution_logs WHERE execution_id = ? AND seq > ?)", id, nextSeq,
+	).Scan(&hasMore)
+
 	c.JSON(http.StatusOK, gin.H{
 		"chunks":     chunks,
 		"next_seq":   nextSeq,
 		"oldest_seq": oldestSeq.Int64,
+		"has_more":   hasMore,
 		"status":     status,
 		"finished":   finishedAt.Valid,
 	})

@@ -35,6 +35,7 @@ interface Props {
  */
 export default function ExecutionLogView({ execution }: Props) {
   const [chunks, setChunks] = useState<ExecutionLogChunk[]>([])
+  const [aggregate, setAggregate] = useState(execution)
   const [finished, setFinished] = useState(!!execution.finished_at)
   const [gap, setGap] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -47,6 +48,7 @@ export default function ExecutionLogView({ execution }: Props) {
 
     cursor.current = 0
     setChunks([])
+    setAggregate(execution)
     setGap(false)
     setFailed(false)
     setFinished(!!execution.finished_at)
@@ -66,8 +68,19 @@ export default function ExecutionLogView({ execution }: Props) {
           setChunks(prev => [...prev, ...data.chunks])
         }
         setFinished(data.finished)
-        if (!data.finished) {
+
+        // A finished execution can still have a backlog: one response is
+        // capped, so stopping on `finished` alone would strand the remainder.
+        if (data.has_more) {
+          timer = setTimeout(poll, 0)
+        } else if (!data.finished) {
           timer = setTimeout(poll, POLL_INTERVAL_MS)
+        } else if (!execution.finished_at) {
+          // It finished while the modal was open, so the record we were handed
+          // still has the empty output the list was showing. Refetch it, or the
+          // fallback below would render that stale blank.
+          const fresh = await executionApi.get(execution.id)
+          if (!cancelled) setAggregate(fresh.data)
         }
       } catch {
         if (!cancelled) setFailed(true)
@@ -101,8 +114,8 @@ export default function ExecutionLogView({ execution }: Props) {
     }
     return (
       <pre style={boxStyle}>
-        {execution.output || '(无输出)'}
-        {execution.error && <span style={{ color: '#ff7875' }}>{'\n' + execution.error}</span>}
+        {aggregate.output || '(无输出)'}
+        {aggregate.error && <span style={{ color: '#ff7875' }}>{'\n' + aggregate.error}</span>}
       </pre>
     )
   }

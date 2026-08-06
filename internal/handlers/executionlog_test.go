@@ -134,6 +134,7 @@ type logsResponse struct {
 	} `json:"chunks"`
 	NextSeq   int64  `json:"next_seq"`
 	OldestSeq int64  `json:"oldest_seq"`
+	HasMore   bool   `json:"has_more"`
 	Status    string `json:"status"`
 	Finished  bool   `json:"finished"`
 }
@@ -219,5 +220,37 @@ func TestLogsUnknownExecutionIs404(t *testing.T) {
 	w, _ := fetchLogs(t, 9999, "")
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestLogsSignalsMoreWhenBacklogExceedsOnePage(t *testing.T) {
+	setupExecDB(t)
+	execID := startedExecution(t)
+	sink := newExecutionLogSink(execID, 0)
+	for i := 0; i < maxLogChunksPerResponse+10; i++ {
+		sink.WriteChunk(services.StreamStdout, "x")
+	}
+	// Finished, so a client that stopped on `finished` alone would strand the
+	// chunks past the first page.
+	if _, err := database.DB.Exec(
+		"UPDATE executions SET status='success', finished_at=CURRENT_TIMESTAMP WHERE id=?", execID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	_, body := fetchLogs(t, execID, "?after_seq=0")
+	if len(body.Chunks) != maxLogChunksPerResponse {
+		t.Fatalf("expected a full page of %d chunks, got %d", maxLogChunksPerResponse, len(body.Chunks))
+	}
+	if !body.HasMore {
+		t.Error("has_more must be true while a backlog remains, even on a finished execution")
+	}
+
+	_, rest := fetchLogs(t, execID, "?after_seq="+strconv.FormatInt(body.NextSeq, 10))
+	if len(rest.Chunks) != 10 {
+		t.Errorf("expected the remaining 10 chunks, got %d", len(rest.Chunks))
+	}
+	if rest.HasMore {
+		t.Error("has_more must be false once the backlog is drained")
 	}
 }

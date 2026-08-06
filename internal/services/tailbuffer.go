@@ -5,9 +5,8 @@ package services
 // aggregate ends up in a single database column, so the head is dropped rather
 // than letting it grow without bound. limit <= 0 disables the cap.
 type tailBuffer struct {
-	limit     int
-	buf       []byte
-	truncated bool
+	limit int
+	buf   []byte
 }
 
 func newTailBuffer(limit int) *tailBuffer {
@@ -22,10 +21,6 @@ func (t *tailBuffer) Append(s string) {
 	// Copy the tail down rather than resliceing: a resliced buffer keeps the
 	// dropped head alive in the backing array for the life of the execution.
 	t.buf = append(t.buf[:0], t.buf[len(t.buf)-t.limit:]...)
-	t.truncated = true
 }
 
 func (t *tailBuffer) String() string { return string(t.buf) }
-
-// Truncated reports whether any bytes were dropped from the head.
-func (t *tailBuffer) Truncated() bool { return t.truncated }
