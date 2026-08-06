@@ -159,7 +159,7 @@ func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader, out Ou
 		return &ExecuteResult{Success: false, Error: err.Error()}
 	}
 
-	capture := newStreamCapture(out)
+	streams := newStreamCapture(out)
 	session.Stdin = stdin
 
 	stdout, err := session.StdoutPipe()
@@ -180,8 +180,8 @@ func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader, out Ou
 
 	var readers sync.WaitGroup
 	readers.Add(2)
-	go pumpStream(&readers, capture, StreamStdout, stdout)
-	go pumpStream(&readers, capture, StreamStderr, stderr)
+	go pumpStream(&readers, streams, StreamStdout, stdout)
+	go pumpStream(&readers, streams, StreamStderr, stderr)
 
 	done := make(chan error, 1)
 	go func() {
@@ -192,8 +192,8 @@ func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader, out Ou
 	select {
 	case err := <-done:
 		session.Close()
-		res, errOut := capture.result()
-		result := &ExecuteResult{Output: res, Error: errOut}
+		stdoutText, stderrText := streams.result()
+		result := &ExecuteResult{Output: stdoutText, Error: stderrText}
 		if err != nil {
 			result.Success = false
 			if result.Error == "" {
@@ -204,22 +204,18 @@ func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader, out Ou
 		}
 		return result
 	case <-time.After(executionTimeout):
-		// Closing the session unblocks the readers, unlike the local case where a
-		// surviving grandchild can hold the pipes open: these pipes live in this
-		// process and die with the session, so waiting here is bounded.
+		// Close only sends a channel-close message; the readers unblock when the
+		// remote answers it, so a wedged host would keep `done` pending forever.
+		// The timeout has to return regardless, exactly as the local branch does.
 		session.Close()
-		<-done
-		res, errOut := capture.result()
+		stdoutText, stderrText := streams.result()
 		return &ExecuteResult{
 			Success: false,
-			Output:  res,
-			Error:   strings.TrimLeft(errOut+"\n"+sshTimeoutMessage, "\n"),
+			Output:  stdoutText,
+			Error:   strings.TrimLeft(stderrText+"\n"+timeoutMessage(executionTimeout), "\n"),
 		}
 	}
 }
-
-// sshTimeoutMessage is derived from executionTimeout so the two cannot drift.
-var sshTimeoutMessage = fmt.Sprintf("execution timeout (%s)", executionTimeout)
 
 // sshScriptCommand builds the remote command: env assignments prefix the
 // interpreter call, args follow after the stdin-script flag.

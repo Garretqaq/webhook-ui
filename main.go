@@ -82,10 +82,10 @@ func main() {
 
 	authHandler := handlers.NewAuthHandler(cfg.AdminUsername, cfg.AdminPassword, loginGuard)
 	hookHandler := handlers.NewHookHandler()
-	executor := services.NewExecutor(cfg.AllowedCommands, cfg.DataDir, cfg.LogTailBytes)
+	executor := services.NewExecutor(cfg.AllowedCommands, cfg.DataDir)
 	webhookHandler := handlers.NewWebhookHandler(executor, cfg.LogTailBytes)
 	executionHandler := handlers.NewExecutionHandler()
-	scriptHandler := handlers.NewScriptHandler(executor)
+	scriptHandler := handlers.NewScriptHandler(executor, cfg.LogTailBytes)
 	sshHostHandler := handlers.NewSSHHostHandler()
 
 	r.POST("/api/auth/login", middleware.LoginRateLimit(loginLimiter), authHandler.Login)

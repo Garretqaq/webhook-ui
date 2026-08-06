@@ -1,9 +1,17 @@
 package services
 
 import (
+	"fmt"
 	"strings"
 	"sync"
+	"time"
+	"unicode/utf8"
 )
+
+// timeoutMessage is derived from the duration itself so no copy can drift.
+func timeoutMessage(d time.Duration) string {
+	return fmt.Sprintf("execution timeout (%s)", d)
+}
 
 // Stream names for a chunk's origin.
 const (
@@ -41,13 +49,17 @@ type streamCapture struct {
 	sink   LogSink
 	stdout *tailBuffer
 	stderr *tailBuffer
+	// pending holds the trailing bytes of a rune that a read cut in half, per
+	// stream, until the rest of it arrives.
+	pending map[string][]byte
 }
 
 func newStreamCapture(out OutputStream) *streamCapture {
 	return &streamCapture{
-		sink:   out.Sink,
-		stdout: newTailBuffer(out.TailBytes),
-		stderr: newTailBuffer(out.TailBytes),
+		sink:    out.Sink,
+		stdout:  newTailBuffer(out.TailBytes),
+		stderr:  newTailBuffer(out.TailBytes),
+		pending: map[string][]byte{},
 	}
 }
 
@@ -55,27 +67,85 @@ func (c *streamCapture) write(stream, chunk string) {
 	if chunk == "" {
 		return
 	}
-	// A remote host can emit output in any encoding — GBK is routine on Chinese
-	// Windows. Invalid UTF-8 would survive into the database and only turn into
-	// replacement characters at the JSON boundary, so it is replaced here, where
-	// the aggregate and the persisted chunks still agree on the bytes.
-	chunk = strings.ToValidUTF8(chunk, "\uFFFD")
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// A read boundary lands wherever the pipe happened to fill, so a multi-byte
+	// rune is routinely cut in half. Sanitising each read on its own would turn
+	// both halves into replacement characters — worst for exactly the CJK output
+	// this is meant to protect — so the split tail waits for its other half.
+	buf := append(c.pending[stream], chunk...)
+	keep := incompleteTailLen(buf)
+	c.pending[stream] = append([]byte(nil), buf[len(buf)-keep:]...)
+
+	c.emit(stream, string(buf[:len(buf)-keep]))
+}
+
+// emit sanitises and records text. The caller holds the lock.
+func (c *streamCapture) emit(stream, text string) {
+	if text == "" {
+		return
+	}
+	// Whatever is left that is still not valid UTF-8 is genuinely foreign
+	// encoding, not a split rune. It is replaced here rather than at the JSON
+	// boundary so the aggregate and the persisted chunks agree on the bytes.
+	text = strings.ToValidUTF8(text, "\uFFFD")
+
 	if stream == StreamStderr {
-		c.stderr.Append(chunk)
+		c.stderr.Append(text)
 	} else {
-		c.stdout.Append(chunk)
+		c.stdout.Append(text)
 	}
 	if c.sink != nil {
-		c.sink.WriteChunk(stream, chunk)
+		c.sink.WriteChunk(stream, text)
 	}
 }
 
 func (c *streamCapture) result() (stdout, stderr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// A stream that ended mid-rune is truncated output, not a pending one; give
+	// up waiting and let the leftovers become replacement characters.
+	for stream, leftover := range c.pending {
+		if len(leftover) > 0 {
+			c.pending[stream] = nil
+			c.emit(stream, string(leftover))
+		}
+	}
 	return c.stdout.String(), c.stderr.String()
+}
+
+// incompleteTailLen reports how many bytes at the end of b begin a rune whose
+// remaining bytes have not arrived yet.
+func incompleteTailLen(b []byte) int {
+	for back := 1; back <= utf8.UTFMax && back <= len(b); back++ {
+		lead := b[len(b)-back]
+		if !utf8.RuneStart(lead) {
+			continue // continuation byte; keep walking back to the lead
+		}
+		if runeLenFor(lead) > back {
+			return back
+		}
+		return 0
+	}
+	return 0
+}
+
+// runeLenFor returns how many bytes the rune starting with lead occupies. A
+// byte that leads nothing valid counts as one, so foreign-encoding garbage is
+// emitted immediately instead of being held back waiting for a rune that will
+// never complete.
+func runeLenFor(lead byte) int {
+	switch {
+	case lead < 0x80:
+		return 1
+	case lead&0xE0 == 0xC0:
+		return 2
+	case lead&0xF0 == 0xE0:
+		return 3
+	case lead&0xF8 == 0xF0:
+		return 4
+	}
+	return 1
 }

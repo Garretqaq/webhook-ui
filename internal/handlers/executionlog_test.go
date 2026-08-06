@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -252,5 +253,26 @@ func TestLogsSignalsMoreWhenBacklogExceedsOnePage(t *testing.T) {
 	}
 	if rest.HasMore {
 		t.Error("has_more must be false once the backlog is drained")
+	}
+}
+
+func TestTailLimitReachesTheLocalExecutorToo(t *testing.T) {
+	setupExecDB(t)
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	executor := services.NewExecutor([]string{shPath}, t.TempDir())
+
+	// OutputStream carries the cap for both execution locations; it used to be
+	// unwrapped on the local path and silently dropped.
+	result := runScript(executor, shPath, "for i in 1 2 3 4 5 6 7 8 9; do echo LINE$i; done",
+		"", nil, nil, "", services.OutputStream{TailBytes: 12})
+
+	if !result.Success {
+		t.Fatalf("expected success, got: %s", result.Error)
+	}
+	if len(result.Output) > 12 {
+		t.Errorf("the local path ignored TailBytes: %d bytes retained", len(result.Output))
 	}
 }

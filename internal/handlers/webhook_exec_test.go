@@ -47,7 +47,7 @@ func newExecTestHandler(t *testing.T) *WebhookHandler {
 	if err != nil {
 		t.Skip("sh not available")
 	}
-	return NewWebhookHandler(services.NewExecutor([]string{shPath}, t.TempDir(), 0), 0)
+	return NewWebhookHandler(services.NewExecutor([]string{shPath}, t.TempDir()), 0)
 }
 
 func TestExecuteScriptHookRunsLocallyWhenNoHost(t *testing.T) {

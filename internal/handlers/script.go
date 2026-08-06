@@ -15,11 +15,12 @@ import (
 )
 
 type ScriptHandler struct {
-	executor *services.Executor
+	executor     *services.Executor
+	logTailBytes int
 }
 
-func NewScriptHandler(executor *services.Executor) *ScriptHandler {
-	return &ScriptHandler{executor: executor}
+func NewScriptHandler(executor *services.Executor, logTailBytes int) *ScriptHandler {
+	return &ScriptHandler{executor: executor, logTailBytes: logTailBytes}
 }
 
 func (h *ScriptHandler) List(c *gin.Context) {
@@ -190,9 +191,11 @@ func (h *ScriptHandler) Test(c *gin.Context) {
 		return
 	}
 
-	// No sink: a test run has no execution row, so its output is only
-	// aggregated onto the response.
-	result := runScript(h.executor, req.Interpreter, req.Content, req.SSHHostID, req.Args, nil, "", services.OutputStream{})
+	// No sink: a test run has no execution row to attach chunks to, so its
+	// output is only aggregated onto the response — still capped, or a runaway
+	// test script would be answered with everything it printed.
+	result := runScript(h.executor, req.Interpreter, req.Content, req.SSHHostID, req.Args, nil, "",
+		services.OutputStream{TailBytes: h.logTailBytes})
 	c.JSON(http.StatusOK, gin.H{
 		"success": result.Success,
 		"output":  result.Output,

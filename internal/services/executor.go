@@ -18,18 +18,15 @@ const executionTimeout = 5 * time.Minute
 type Executor struct {
 	allowedCommands []string
 	tmpDir          string
-	// logTailBytes caps each aggregated stream; 0 means unbounded.
-	logTailBytes int
 	// timeout bounds a single execution. A field rather than a constant so
 	// tests can reach the timeout branch without waiting for it.
 	timeout time.Duration
 }
 
-func NewExecutor(allowedCommands []string, dataDir string, logTailBytes int) *Executor {
+func NewExecutor(allowedCommands []string, dataDir string) *Executor {
 	return &Executor{
 		allowedCommands: allowedCommands,
 		tmpDir:          filepath.Join(dataDir, "tmp"),
-		logTailBytes:    logTailBytes,
 		timeout:         executionTimeout,
 	}
 }
@@ -73,7 +70,7 @@ type ExecuteResult struct {
 	Success bool
 }
 
-func (e *Executor) Execute(hook *models.Hook, env map[string]string, args []string, sink LogSink) *ExecuteResult {
+func (e *Executor) Execute(hook *models.Hook, env map[string]string, args []string, out OutputStream) *ExecuteResult {
 	if !e.isAllowed(hook.Command) {
 		return &ExecuteResult{
 			Success: false,
@@ -90,14 +87,14 @@ func (e *Executor) Execute(hook *models.Hook, env map[string]string, args []stri
 	}
 
 	applyEnv(cmd, env)
-	return e.run(cmd, sink)
+	return e.run(cmd, out)
 }
 
 // ExecuteScript writes content to a temp file and runs it with the given
 // interpreter. The interpreter binary must pass the command whitelist.
-// workDir may be empty to inherit the current directory. sink may be nil,
-// in which case output is only aggregated onto the result.
-func (e *Executor) ExecuteScript(interpreter, content string, args []string, env map[string]string, workDir string, sink LogSink) *ExecuteResult {
+// workDir may be empty to inherit the current directory. A zero OutputStream
+// means output is only aggregated onto the result, uncapped.
+func (e *Executor) ExecuteScript(interpreter, content string, args []string, env map[string]string, workDir string, out OutputStream) *ExecuteResult {
 	if !e.isAllowed(interpreter) {
 		return &ExecuteResult{
 			Success: false,
@@ -146,7 +143,7 @@ func (e *Executor) ExecuteScript(interpreter, content string, args []string, env
 		cmd.Dir = workDir
 	}
 	applyEnv(cmd, env)
-	return e.run(cmd, sink)
+	return e.run(cmd, out)
 }
 
 func applyEnv(cmd *exec.Cmd, env map[string]string) {
@@ -156,16 +153,11 @@ func applyEnv(cmd *exec.Cmd, env map[string]string) {
 	}
 }
 
-// timeoutMessage is derived from the timeout itself so the two cannot drift.
-func (e *Executor) timeoutMessage() string {
-	return fmt.Sprintf("execution timeout (%s)", e.timeout)
-}
-
 // run starts cmd and streams both of its output streams into capture until it
 // exits. Output reaches the sink while the process is still running, which is
 // what lets a long execution be watched live instead of only after it ends.
-func (e *Executor) run(cmd *exec.Cmd, sink LogSink) *ExecuteResult {
-	capture := newStreamCapture(OutputStream{Sink: sink, TailBytes: e.logTailBytes})
+func (e *Executor) run(cmd *exec.Cmd, out OutputStream) *ExecuteResult {
+	capture := newStreamCapture(out)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -219,7 +211,7 @@ func (e *Executor) run(cmd *exec.Cmd, sink LogSink) *ExecuteResult {
 		return &ExecuteResult{
 			Success: false,
 			Output:  out,
-			Error:   strings.TrimLeft(errOut+"\n"+e.timeoutMessage(), "\n"),
+			Error:   strings.TrimLeft(errOut+"\n"+timeoutMessage(e.timeout), "\n"),
 		}
 	}
 }

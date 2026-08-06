@@ -14,12 +14,12 @@ func newTestExecutor(t *testing.T) *Executor {
 	if err != nil {
 		t.Skip("bash not available")
 	}
-	return NewExecutor([]string{bashPath}, t.TempDir(), 0)
+	return NewExecutor([]string{bashPath}, t.TempDir())
 }
 
 func TestExecuteScriptSuccess(t *testing.T) {
 	e := newTestExecutor(t)
-	result := e.ExecuteScript("bash", "echo hello $1; echo $MY_VAR", []string{"world"}, map[string]string{"MY_VAR": "42"}, "", nil)
+	result := e.ExecuteScript("bash", "echo hello $1; echo $MY_VAR", []string{"world"}, map[string]string{"MY_VAR": "42"}, "", OutputStream{})
 	if !result.Success {
 		t.Fatalf("expected success, got error: %s", result.Error)
 	}
@@ -33,7 +33,7 @@ func TestExecuteScriptSuccess(t *testing.T) {
 
 func TestExecuteScriptNonZeroExit(t *testing.T) {
 	e := newTestExecutor(t)
-	result := e.ExecuteScript("bash", "echo oops >&2; exit 1", nil, nil, "", nil)
+	result := e.ExecuteScript("bash", "echo oops >&2; exit 1", nil, nil, "", OutputStream{})
 	if result.Success {
 		t.Fatal("expected failure for non-zero exit")
 	}
@@ -43,8 +43,8 @@ func TestExecuteScriptNonZeroExit(t *testing.T) {
 }
 
 func TestExecuteScriptInterpreterNotAllowed(t *testing.T) {
-	e := NewExecutor([]string{"/usr/bin/git"}, t.TempDir(), 0)
-	result := e.ExecuteScript("bash", "echo hi", nil, nil, "", nil)
+	e := NewExecutor([]string{"/usr/bin/git"}, t.TempDir())
+	result := e.ExecuteScript("bash", "echo hi", nil, nil, "", OutputStream{})
 	if result.Success {
 		t.Fatal("expected failure when interpreter not whitelisted")
 	}
@@ -56,7 +56,7 @@ func TestExecuteScriptInterpreterNotAllowed(t *testing.T) {
 func TestExecuteScriptWorkingDir(t *testing.T) {
 	e := newTestExecutor(t)
 	workDir := t.TempDir()
-	result := e.ExecuteScript("bash", "pwd", nil, nil, workDir, nil)
+	result := e.ExecuteScript("bash", "pwd", nil, nil, workDir, OutputStream{})
 	if !result.Success {
 		t.Fatalf("expected success, got: %s", result.Error)
 	}
@@ -69,7 +69,7 @@ func TestExecuteScriptWorkingDir(t *testing.T) {
 
 func TestExecuteScriptCleansUpTempFile(t *testing.T) {
 	e := newTestExecutor(t)
-	result := e.ExecuteScript("bash", "echo done", nil, nil, "", nil)
+	result := e.ExecuteScript("bash", "echo done", nil, nil, "", OutputStream{})
 	if !result.Success {
 		t.Fatalf("expected success, got: %s", result.Error)
 	}
@@ -92,8 +92,8 @@ func TestExecuteScriptRelativeTmpDirWithWorkDir(t *testing.T) {
 	t.Chdir(t.TempDir())
 	defer os.Chdir(cwd)
 
-	e := NewExecutor([]string{"/bin", "/usr/bin"}, "./data", 0)
-	result := e.ExecuteScript("sh", "pwd", nil, nil, "/tmp", nil)
+	e := NewExecutor([]string{"/bin", "/usr/bin"}, "./data")
+	result := e.ExecuteScript("sh", "pwd", nil, nil, "/tmp", OutputStream{})
 	if !result.Success {
 		t.Fatalf("expected success, got error: %s", result.Error)
 	}

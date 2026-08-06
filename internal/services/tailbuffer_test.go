@@ -1,6 +1,9 @@
 package services
 
-import "testing"
+import (
+	"testing"
+	"unicode/utf8"
+)
 
 func TestTailBufferKeepsEverythingUnderLimit(t *testing.T) {
 	b := newTailBuffer(100)
@@ -34,5 +37,17 @@ func TestTailBufferZeroLimitMeansUnbounded(t *testing.T) {
 	b.Append("abcde")
 	if got := b.String(); got != "0123456789abcde" {
 		t.Errorf("limit 0 must retain everything, got %q", got)
+	}
+}
+
+func TestTailBufferCutsOnARuneBoundary(t *testing.T) {
+	// Nine bytes of CJK; a 4 byte cap lands mid-rune if the cut is naive.
+	b := newTailBuffer(4)
+	b.Append("中文字")
+	if !utf8.ValidString(b.String()) {
+		t.Errorf("truncation left invalid UTF-8: %q", b.String())
+	}
+	if got := b.String(); got != "字" {
+		t.Errorf("String() = %q, want the last whole rune %q", got, "字")
 	}
 }

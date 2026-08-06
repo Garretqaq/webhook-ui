@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // recordingSink captures chunks and signals the first one, so a test can tell
@@ -50,7 +51,7 @@ func TestExecuteScriptStreamsBeforeProcessExits(t *testing.T) {
 
 	done := make(chan *ExecuteResult, 1)
 	go func() {
-		done <- e.ExecuteScript("bash", "echo early; sleep 1; echo late", nil, nil, "", sink)
+		done <- e.ExecuteScript("bash", "echo early; sleep 1; echo late", nil, nil, "", OutputStream{Sink: sink})
 	}()
 
 	select {
@@ -81,7 +82,7 @@ func TestExecuteScriptLabelsStderrChunks(t *testing.T) {
 	e := newTestExecutor(t)
 	sink := newRecordingSink()
 
-	result := e.ExecuteScript("bash", "echo out; echo err >&2", nil, nil, "", sink)
+	result := e.ExecuteScript("bash", "echo out; echo err >&2", nil, nil, "", OutputStream{Sink: sink})
 	if !result.Success {
 		t.Fatalf("expected success, got: %s", result.Error)
 	}
@@ -101,7 +102,7 @@ func TestExecuteScriptLabelsStderrChunks(t *testing.T) {
 
 func TestExecuteScriptWithoutSinkStillAggregates(t *testing.T) {
 	e := newTestExecutor(t)
-	result := e.ExecuteScript("bash", "echo hi", nil, nil, "", nil)
+	result := e.ExecuteScript("bash", "echo hi", nil, nil, "", OutputStream{})
 	if !result.Success {
 		t.Fatalf("expected success, got: %s", result.Error)
 	}
@@ -112,8 +113,9 @@ func TestExecuteScriptWithoutSinkStillAggregates(t *testing.T) {
 
 func TestExecuteScriptCapsAggregateAtTailLimit(t *testing.T) {
 	e := newTestExecutor(t)
-	e.logTailBytes = 16
-	result := e.ExecuteScript("bash", "for i in $(seq 1 200); do echo LINE$i; done", nil, nil, "", nil)
+
+	result := e.ExecuteScript("bash", "for i in $(seq 1 200); do echo LINE$i; done", nil, nil, "",
+		OutputStream{TailBytes: 16})
 	if !result.Success {
 		t.Fatalf("expected success, got: %s", result.Error)
 	}
@@ -129,7 +131,7 @@ func TestRunKeepsStderrWhenKilledOnTimeout(t *testing.T) {
 	e := newTestExecutor(t)
 	e.timeout = 300 * time.Millisecond
 
-	result := e.ExecuteScript("bash", "echo out; echo diagnostic >&2; sleep 30", nil, nil, "", nil)
+	result := e.ExecuteScript("bash", "echo out; echo diagnostic >&2; sleep 30", nil, nil, "", OutputStream{})
 	if result.Success {
 		t.Fatal("a timed-out process must not report success")
 	}
@@ -151,7 +153,7 @@ func TestRunTimeoutIsNotHeldUpByASurvivingGrandchild(t *testing.T) {
 	// `sleep` inherits the pipes and outlives the shell it was spawned from, so
 	// waiting for EOF here would stretch the 300ms timeout out to 10 seconds.
 	start := time.Now()
-	result := e.ExecuteScript("bash", "echo out; sleep 10", nil, nil, "", nil)
+	result := e.ExecuteScript("bash", "echo out; sleep 10", nil, nil, "", OutputStream{})
 	elapsed := time.Since(start)
 
 	if result.Success {
@@ -159,5 +161,51 @@ func TestRunTimeoutIsNotHeldUpByASurvivingGrandchild(t *testing.T) {
 	}
 	if elapsed > 3*time.Second {
 		t.Errorf("timeout took %s; a surviving grandchild must not hold the call open", elapsed)
+	}
+}
+
+func TestStreamCaptureReassemblesRunesSplitAcrossReads(t *testing.T) {
+	sink := newRecordingSink()
+	c := newStreamCapture(OutputStream{Sink: sink})
+
+	// A pipe read boundary can fall anywhere, including inside a rune.
+	const text = "中文输出"
+	for i := 0; i < len(text); i++ {
+		c.write(StreamStdout, text[i:i+1])
+	}
+
+	out, _ := c.result()
+	if out != text {
+		t.Errorf("aggregate = %q, want %q — a split rune was corrupted", out, text)
+	}
+	if got := sink.textFor(StreamStdout); got != text {
+		t.Errorf("sink text = %q, want %q", got, text)
+	}
+}
+
+func TestStreamCaptureReplacesGenuinelyForeignBytes(t *testing.T) {
+	c := newStreamCapture(OutputStream{})
+	c.write(StreamStdout, string([]byte{0xff, 0xfe})+"ok")
+
+	out, _ := c.result()
+	if !utf8.ValidString(out) {
+		t.Errorf("invalid bytes survived: %q", out)
+	}
+	if !strings.Contains(out, "ok") {
+		t.Errorf("valid text must survive alongside them, got %q", out)
+	}
+}
+
+func TestStreamCaptureFlushesAStreamEndingMidRune(t *testing.T) {
+	c := newStreamCapture(OutputStream{})
+	// Only the first two bytes of a three byte rune ever arrive.
+	c.write(StreamStdout, "中"[:2])
+
+	out, _ := c.result()
+	if !utf8.ValidString(out) {
+		t.Errorf("a stream cut mid-rune must not leave invalid UTF-8: %q", out)
+	}
+	if out == "" {
+		t.Error("the dangling bytes should surface as replacement characters, not vanish")
 	}
 }
