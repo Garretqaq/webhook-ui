@@ -72,10 +72,9 @@ export interface Script {
   updated_at: string
 }
 
-export interface ScriptTestResult {
-  success: boolean
-  output: string
-  error: string
+export interface ScriptTestRun {
+  run_id: string
+  status: string
 }
 
 export interface SSHHost {
@@ -127,8 +126,18 @@ export const scriptApi = {
   create: (script: Partial<Script>) => client.post<Script>('/scripts', script),
   update: (id: string, script: Partial<Script>) => client.put<Script>(`/scripts/${id}`, script),
   delete: (id: string) => client.delete(`/scripts/${id}`),
-  test: (data: { interpreter: string; content: string; args: string[]; ssh_host_id?: string }) =>
-    client.post<ScriptTestResult>('/scripts/test', data),
+}
+
+/**
+ * Test runs are not executions: they live in the server's memory only, are
+ * gone after a restart, and never reach the execution history. Their log is
+ * served in the same shape as an execution's so both can be read the same way.
+ */
+export const scriptTestRunApi = {
+  start: (data: { interpreter: string; content: string; args: string[]; ssh_host_id?: string }) =>
+    client.post<ScriptTestRun>('/script-test-runs', data),
+  logs: (runId: string, afterSeq: number) =>
+    client.get<ExecutionLogs>(`/script-test-runs/${runId}/logs`, { params: { after_seq: afterSeq } }),
 }
 
 export const sshHostApi = {

@@ -68,6 +68,9 @@ type ExecuteResult struct {
 	// Canceled distinguishes an operator stopping the run from the script
 	// failing on its own, which the execution log has to be able to show.
 	Canceled bool
+	// TimedOut distinguishes a run the time budget stopped from one that
+	// failed on its own, for the same reason.
+	TimedOut bool
 }
 
 func (e *Executor) Execute(hook *models.Hook, env map[string]string, args []string, opts ExecOptions) *ExecuteResult {
@@ -208,7 +211,7 @@ func (e *Executor) run(cmd *exec.Cmd, opts ExecOptions) *ExecuteResult {
 		// and select picks at random — so ask outright rather than reporting a
 		// stopped run as one that finished on its own.
 		if canceled(opts.Cancel) {
-			return abortResult(capture, canceledMessage, true)
+			return abortResult(capture, canceledMessage, true, false)
 		}
 		out, errOut := capture.result()
 		result := &ExecuteResult{Output: out, Error: errOut}
@@ -223,10 +226,10 @@ func (e *Executor) run(cmd *exec.Cmd, opts ExecOptions) *ExecuteResult {
 		return result
 	case <-timeoutChan(opts.Timeout):
 		kill()
-		return abortResult(capture, timeoutMessage(opts.Timeout), false)
+		return abortResult(capture, timeoutMessage(opts.Timeout), false, true)
 	case <-opts.Cancel:
 		kill()
-		return abortResult(capture, canceledMessage, true)
+		return abortResult(capture, canceledMessage, true, false)
 	}
 }
 

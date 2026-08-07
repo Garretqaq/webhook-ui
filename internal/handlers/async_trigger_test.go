@@ -257,19 +257,6 @@ func TestSyncHookDefaultsItsTimeoutInsteadOfBeingRejected(t *testing.T) {
 	}
 }
 
-func TestScriptTestRunStaysBounded(t *testing.T) {
-	// The script tester answers a request that is waiting on it, so it must
-	// never inherit the unlimited run async hooks are allowed. A zero Timeout
-	// reaches the executor as "no limit" and hangs the request forever.
-	opts := (&ScriptHandler{logTailBytes: 1024}).execOptions()
-	if opts.Timeout <= 0 {
-		t.Errorf("Timeout = %s; a synchronous endpoint must be bounded", opts.Timeout)
-	}
-	if opts.TailBytes != 1024 {
-		t.Errorf("TailBytes = %d, want the configured cap", opts.TailBytes)
-	}
-}
-
 func TestAsyncExecutionPanicDoesNotTakeTheProcessDown(t *testing.T) {
 	setupExecDB(t)
 	runner := NewRunner(2, 8)

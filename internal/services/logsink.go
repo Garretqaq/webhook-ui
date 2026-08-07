@@ -28,18 +28,21 @@ func canceled(ch <-chan struct{}) bool {
 }
 
 // abortResult assembles what an execution stopped early has to report: the
-// output it managed to produce, with the reason appended to stderr.
+// output it managed to produce, with the reason appended to stderr. Which of
+// the two reasons it was is carried as a flag rather than left for a caller to
+// recover by matching on the message.
 //
 // The readers are deliberately not waited on. They only see EOF once every
 // descendant has closed the pipes, and a descendant ignoring the signal would
 // otherwise keep a timeout or a cancellation pending indefinitely — exactly
 // what neither is allowed to do. capture.result seals the capture, so those
 // orphaned readers cannot append below a cancellation marker written after it.
-func abortResult(capture *streamCapture, reason string, wasCanceled bool) *ExecuteResult {
+func abortResult(capture *streamCapture, reason string, wasCanceled, wasTimeout bool) *ExecuteResult {
 	out, errOut := capture.result()
 	return &ExecuteResult{
 		Success:  false,
 		Canceled: wasCanceled,
+		TimedOut: wasTimeout,
 		Output:   out,
 		Error:    strings.TrimLeft(errOut+"\n"+reason, "\n"),
 	}

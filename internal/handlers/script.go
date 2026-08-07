@@ -3,7 +3,9 @@ package handlers
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,10 +19,11 @@ import (
 type ScriptHandler struct {
 	executor     *services.Executor
 	logTailBytes int
+	testRuns     *TestRunRegistry
 }
 
-func NewScriptHandler(executor *services.Executor, logTailBytes int) *ScriptHandler {
-	return &ScriptHandler{executor: executor, logTailBytes: logTailBytes}
+func NewScriptHandler(executor *services.Executor, logTailBytes int, testRuns *TestRunRegistry) *ScriptHandler {
+	return &ScriptHandler{executor: executor, logTailBytes: logTailBytes, testRuns: testRuns}
 }
 
 func (h *ScriptHandler) List(c *gin.Context) {
@@ -175,7 +178,10 @@ type TestScriptRequest struct {
 	SSHHostID   string   `json:"ssh_host_id"`
 }
 
-func (h *ScriptHandler) Test(c *gin.Context) {
+// StartTestRun begins a test run and answers with something to poll, rather
+// than holding the request open for however long the script takes. The output
+// is readable from the log endpoint while it is still being produced.
+func (h *ScriptHandler) StartTestRun(c *gin.Context) {
 	var req TestScriptRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -191,23 +197,69 @@ func (h *ScriptHandler) Test(c *gin.Context) {
 		return
 	}
 
-	result := runScript(h.executor, req.Interpreter, req.Content, req.SSHHostID, req.Args, nil, "",
-		h.execOptions())
-	c.JSON(http.StatusOK, gin.H{
-		"success": result.Success,
-		"output":  result.Output,
-		"error":   result.Error,
-	})
+	run, err := h.testRuns.start()
+	if err != nil {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
+		return
+	}
+
+	go func() {
+		// The request has already been answered, so nothing downstream can turn
+		// a panic into a response, and gin's recovery middleware is not on this
+		// stack. Without this the whole process would go down with it.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("script test run %s panicked: %v", run.id, r)
+				run.WriteChunk(services.StreamStderr, fmt.Sprintf("test run panicked: %v", r))
+				run.finish(models.StatusFailed)
+			}
+		}()
+
+		result := runScript(h.executor, req.Interpreter, req.Content, req.SSHHostID, req.Args, nil, "",
+			h.testRunOptions(run))
+		finishTestRun(run, result)
+	}()
+
+	c.JSON(http.StatusAccepted, gin.H{"run_id": run.id, "status": models.StatusRunning})
 }
 
-// execOptions renders the settings for a test run. There is no execution row
-// to attach chunks to, so the output is only aggregated onto the response —
-// capped, or a runaway script would be answered with everything it printed.
-// The timeout is not optional: this endpoint answers a request that is waiting
-// on it, so an unlimited run would pin the connection open forever.
-func (h *ScriptHandler) execOptions() services.ExecOptions {
+// testRunOptions renders the settings one test run executes under. The run is
+// its own log sink, so its output is readable while it is still being
+// produced, and its own cancel switch. The time budget is fixed: a test run
+// validates a script that is being edited, and anything that legitimately runs
+// longer belongs to an asynchronous hook.
+func (h *ScriptHandler) testRunOptions(run *testRun) services.ExecOptions {
 	return services.ExecOptions{
+		Sink:      run,
 		TailBytes: h.logTailBytes,
 		Timeout:   services.DefaultTimeout,
+		Cancel:    run.cancel,
 	}
+}
+
+// finishTestRun records the outcome, after making sure the log explains it.
+// A run that never reached the interpreter — a rejected binary, an unreachable
+// host — produced no chunks at all, so its error is written into the log
+// itself; otherwise the box would be empty and the status alone would have to
+// account for the failure.
+func finishTestRun(run *testRun, result *services.ExecuteResult) {
+	if result.TimedOut {
+		run.WriteChunk(services.StreamStderr, "\n--- 执行超时 ---\n")
+	} else if !result.Success && result.Error != "" && run.empty() {
+		run.WriteChunk(services.StreamStderr, result.Error)
+	}
+	run.finish(testRunStatus(result))
+}
+
+// TestRunLogs serves a test run's output incrementally, in the same shape as
+// an execution's log so both can be read by the same client code.
+func (h *ScriptHandler) TestRunLogs(c *gin.Context) {
+	run, ok := h.testRuns.get(c.Param("id"))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "test run not found"})
+		return
+	}
+
+	afterSeq, _ := strconv.ParseInt(c.DefaultQuery("after_seq", "0"), 10, 64)
+	c.JSON(http.StatusOK, run.page(afterSeq))
 }

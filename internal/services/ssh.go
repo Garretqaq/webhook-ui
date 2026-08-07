@@ -193,7 +193,7 @@ func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader, opts E
 	case err := <-done:
 		session.Close()
 		if canceled(opts.Cancel) {
-			return abortResult(streams, canceledMessage, true)
+			return abortResult(streams, canceledMessage, true, false)
 		}
 		stdoutText, stderrText := streams.result()
 		result := &ExecuteResult{Output: stdoutText, Error: stderrText}
@@ -213,10 +213,10 @@ func runSSHSession(client *ssh.Client, remoteCmd string, stdin io.Reader, opts E
 		// session — a Windows fire-and-forget launcher, say — keeps running and
 		// merely stops being tracked.
 		session.Close()
-		return abortResult(streams, timeoutMessage(opts.Timeout), false)
+		return abortResult(streams, timeoutMessage(opts.Timeout), false, true)
 	case <-opts.Cancel:
 		session.Close()
-		return abortResult(streams, canceledMessage, true)
+		return abortResult(streams, canceledMessage, true, false)
 	}
 }
 

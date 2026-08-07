@@ -2,16 +2,26 @@ import { useEffect, useState } from 'react'
 import { Form, Input, Select, Button, Card, message, Space, Tag, Radio, Alert } from 'antd'
 import { PlayCircleOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
-import { scriptApi, sshHostApi } from '../api/client'
-import type { ScriptTestResult, SSHHost } from '../api/client'
+import { scriptApi, scriptTestRunApi, sshHostApi } from '../api/client'
+import type { SSHHost } from '../api/client'
+import LogStreamView from '../components/LogStreamView'
 
 const { TextArea } = Input
+
+const testRunStatus: Record<string, { color: string; label: string }> = {
+  running: { color: 'blue', label: '运行中' },
+  success: { color: 'green', label: '执行成功' },
+  failed: { color: 'red', label: '执行失败' },
+  timeout: { color: 'orange', label: '执行超时' },
+  canceled: { color: 'default', label: '已中断' },
+}
 
 export default function ScriptEdit() {
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
   const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<ScriptTestResult | null>(null)
+  const [runId, setRunId] = useState<string | null>(null)
+  const [status, setStatus] = useState('running')
   const [isNew, setIsNew] = useState(true)
   const [sshHosts, setSSHHosts] = useState<SSHHost[]>([])
   const testLocation = Form.useWatch('test_exec_location', form)
@@ -64,19 +74,19 @@ export default function ScriptEdit() {
   const handleTest = async () => {
     const values = form.getFieldsValue()
     setTesting(true)
-    setTestResult(null)
+    setRunId(null)
     try {
       const args = values.test_args?.split('\n').map((s: string) => s.trim()).filter(Boolean) || []
-      const res = await scriptApi.test({
+      const res = await scriptTestRunApi.start({
         interpreter: values.interpreter,
         content: values.content || '',
         args,
         ssh_host_id: values.test_exec_location === 'ssh' ? values.test_ssh_host_id : undefined,
       })
-      setTestResult(res.data)
+      setStatus(res.data.status)
+      setRunId(res.data.run_id)
     } catch (error: any) {
       message.error(error.response?.data?.error || '试运行失败')
-    } finally {
       setTesting(false)
     }
   }
@@ -197,6 +207,7 @@ if ($code -ne 0) { exit $code }`}
             <Button
               icon={<PlayCircleOutlined />}
               loading={testing}
+              disabled={testing}
               onClick={handleTest}
             >
               试运行
@@ -205,22 +216,25 @@ if ($code -ne 0) { exit $code }`}
           </Space>
         </Form.Item>
 
-        {testResult && (
+        {runId && (
           <Card
             size="small"
             title={
-              testResult.success
-                ? <Tag color="green">执行成功</Tag>
-                : <Tag color="red">执行失败</Tag>
+              <Tag color={testRunStatus[status]?.color || 'default'}>
+                {testRunStatus[status]?.label || status}
+              </Tag>
             }
           >
-            {testResult.output && (
-              <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{testResult.output}</pre>
-            )}
-            {testResult.error && (
-              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', color: '#cf1322' }}>{testResult.error}</pre>
-            )}
-            {!testResult.output && !testResult.error && <span>(无输出)</span>}
+            <LogStreamView
+              sourceKey={runId}
+              initiallyFinished={false}
+              fetchPage={async afterSeq => (await scriptTestRunApi.logs(runId, afterSeq)).data}
+              onStatus={(runStatus, finished) => {
+                setStatus(runStatus)
+                if (finished) setTesting(false)
+              }}
+              renderEmpty={() => '(无输出)'}
+            />
           </Card>
         )}
       </Form>

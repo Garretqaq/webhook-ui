@@ -79,6 +79,43 @@ func TestTokenCannotReachPlaintextCredentials(t *testing.T) {
 	check(http.MethodPost, "/api/external/executions/1/cancel", http.StatusNotFound)
 }
 
+// TestScriptTestRunsNeedASession runs the REAL route tree. Test runs execute
+// arbitrary script content, so they must sit behind the session group — and a
+// read-only token must not reach them either.
+func TestScriptTestRunsNeedASession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := testConfig(t)
+	r, err := buildRouter(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setAPITokenForTest("tok-secret"); err != nil {
+		t.Fatal(err)
+	}
+
+	check := func(method, path string, header bool, want int) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(method, path, nil)
+		if header {
+			req.Header.Set("X-API-Token", "tok-secret")
+		}
+		r.ServeHTTP(w, req)
+		if w.Code != want {
+			t.Errorf("%s %s (token=%v) = %d, want %d", method, path, header, w.Code, want)
+		}
+	}
+
+	// The routes exist, and a stranger is turned away by the session guard
+	// rather than by a missing route.
+	check(http.MethodPost, "/api/script-test-runs", false, http.StatusUnauthorized)
+	check(http.MethodGet, "/api/script-test-runs/abc/logs", false, http.StatusUnauthorized)
+
+	// A token can read execution history; it cannot start or watch test runs.
+	check(http.MethodPost, "/api/external/script-test-runs", true, http.StatusNotFound)
+	check(http.MethodPost, "/api/script-test-runs", true, http.StatusUnauthorized)
+}
+
 // setAPITokenForTest writes a token row for tests in this package.
 func setAPITokenForTest(token string) error {
 	_, err := database.DB.Exec(

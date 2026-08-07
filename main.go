@@ -109,7 +109,9 @@ func buildRouter(cfg *config.Config) (*gin.Engine, error) {
 	handlers.StartRetentionSweep(cfg.RetentionDays, nil)
 	webhookHandler := handlers.NewWebhookHandler(executor, cfg.LogTailBytes, runner, cancels)
 	executionHandler := handlers.NewExecutionHandler(cancels)
-	scriptHandler := handlers.NewScriptHandler(executor, cfg.LogTailBytes)
+	testRuns := handlers.NewTestRunRegistry(cfg.LogTailBytes)
+	handlers.StartTestRunSweep(testRuns)
+	scriptHandler := handlers.NewScriptHandler(executor, cfg.LogTailBytes, testRuns)
 	sshHostHandler := handlers.NewSSHHostHandler()
 	settingsHandler := handlers.NewSettingsHandler()
 
@@ -150,7 +152,12 @@ func buildRouter(cfg *config.Config) (*gin.Engine, error) {
 		auth.GET("/scripts/:id", scriptHandler.Get)
 		auth.PUT("/scripts/:id", scriptHandler.Update)
 		auth.DELETE("/scripts/:id", scriptHandler.Delete)
-		auth.POST("/scripts/test", scriptHandler.Test)
+
+		// Test runs live on their own path rather than under /scripts: they are
+		// addressed by a run id that has nothing to do with a script id, and a
+		// run does not need a saved script to exist at all.
+		auth.POST("/script-test-runs", scriptHandler.StartTestRun)
+		auth.GET("/script-test-runs/:id/logs", scriptHandler.TestRunLogs)
 
 		auth.GET("/ssh-hosts", sshHostHandler.List)
 		auth.POST("/ssh-hosts", sshHostHandler.Create)

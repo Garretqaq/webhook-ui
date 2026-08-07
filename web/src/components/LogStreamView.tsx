@@ -29,6 +29,8 @@ interface Props {
   initiallyFinished: boolean
   /** Called once, when a stream that was still running is seen finishing. */
   onFinished?: () => void
+  /** Called after every poll, so a caller can show the source's own status. */
+  onStatus?: (status: string, finished: boolean) => void
   /** Rendered inside the log box when a finished source produced no chunks. */
   renderEmpty: () => React.ReactNode
 }
@@ -47,6 +49,7 @@ export default function LogStreamView({
   fetchPage,
   initiallyFinished,
   onFinished,
+  onStatus,
   renderEmpty,
 }: Props) {
   const [chunks, setChunks] = useState<ExecutionLogChunk[]>([])
@@ -62,6 +65,8 @@ export default function LogStreamView({
   fetchRef.current = fetchPage
   const finishedRef = useRef(onFinished)
   finishedRef.current = onFinished
+  const statusRef = useRef(onStatus)
+  statusRef.current = onStatus
   // Read through a ref as well: it only decides the starting state and whether
   // onFinished still owes a call, so a later flip must not restart the stream.
   const startedFinishedRef = useRef(initiallyFinished)
@@ -92,6 +97,7 @@ export default function LogStreamView({
           setChunks(prev => [...prev, ...data.chunks])
         }
         setFinished(data.finished)
+        statusRef.current?.(data.status, data.finished)
 
         // A finished source can still have a backlog: one response is capped,
         // so stopping on `finished` alone would strand the remainder.

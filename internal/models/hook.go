@@ -97,4 +97,9 @@ const (
 	StatusFailed      = "failed"
 	StatusInterrupted = "interrupted"
 	StatusCanceled    = "canceled"
+	// StatusTimeout separates a run its time budget stopped from one that
+	// failed on its own. Executions still record a timeout as failed; only
+	// script test runs, which have no stored error to explain themselves, use
+	// it today.
+	StatusTimeout = "timeout"
 )
