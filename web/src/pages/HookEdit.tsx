@@ -211,7 +211,10 @@ export default function HookEdit() {
         </Form.Item>
 
         <Form.Item name="response_message" label="成功响应消息">
-          <Input placeholder="OK" />
+          {/* Chrome autofills a saved username into any plain text input that
+              precedes a password field. The bogus autocomplete value is what
+              actually stops it — "off" is ignored. */}
+          <Input placeholder="OK" autoComplete="nope" />
         </Form.Item>
 
         <Form.Item
@@ -219,7 +222,7 @@ export default function HookEdit() {
           label="HMAC 密钥"
           extra="留空则不验证签名"
         >
-          <Input.Password placeholder="签名验证密钥" />
+          <Input.Password placeholder="签名验证密钥" autoComplete="new-password" />
         </Form.Item>
 
         <Form.Item name="hmac_algorithm" label="HMAC 算法">
