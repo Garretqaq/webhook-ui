@@ -152,6 +152,26 @@ echo "完整body: $PAYLOAD"              # pass_payload_to 选 env/both`}</pre>
           <Paragraph>
             每次触发（含验签失败）都会记录到"执行日志"菜单，可查看命令 stdout/stderr 和耗时。
           </Paragraph>
+
+          <Title level={4}>脚本试运行</Title>
+          <Paragraph>
+            脚本编辑页的「试运行」用来验证正在编辑的脚本，
+            <Text strong>它不是一次正式执行</Text>，和 Hook 触发有几处刻意的区别：
+          </Paragraph>
+          <ul>
+            <li>不产生执行记录，不会出现在「执行日志」里；日志只存在服务内存中，<Text strong>服务重启即丢</Text></li>
+            <li>日志按尾部保留（上限同 <Text code>LOG_TAIL_BYTES</Text>），超出会滚删最旧的部分。日志框上方出现断档提示时，表示中间确实丢了一段</li>
+            <li>超时固定 5 分钟且不可配置。需要跑更久的任务，请配成 Hook 并勾选「异步执行」，在那里调超时</li>
+            <li>同时最多 3 个试运行，占满后新的试运行直接被拒绝（不排队）——试运行是要立刻看到输出的动作，排队没有意义</li>
+            <li>关闭页面或刷新只是停止观看，脚本仍在服务端继续跑；但页面拿不回原来的 run，日志框会空掉</li>
+          </ul>
+          <Paragraph>
+            运行期间「试运行」按钮变成「中断」。中断后本地执行连同脚本派生的子进程一起终止，
+            远端执行关闭 SSH 会话，状态记为「已中断」并在日志尾部留下标记——
+            这样事后能分清是脚本自己挂了还是人工停的。
+            <Text strong>已脱离 SSH 会话的远端进程中断不到</Text>（例如 Windows 上 fire-and-forget 起的进程），
+            「已中断」只代表本服务不再跟踪它。
+          </Paragraph>
         </Typography>
   </>
 )

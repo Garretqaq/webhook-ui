@@ -234,9 +234,13 @@ POST /hooks/:id          # 也支持 GET（见 0.2.0+）
 | `POST` | `/api/executions/:id/cancel` | 中断正在运行的异步执行 |
 | `GET/POST` | `/api/settings/api-token` · `/api/settings/api-token/regenerate` | 查看 / 重新生成 API token |
 | `GET/POST/PUT/DELETE` | `/api/scripts` | 脚本管理 |
-| `POST` | `/api/scripts/test` | 试运行脚本 |
+| `POST` | `/api/script-test-runs` | 发起脚本试运行，`202` 返回 `run_id` |
+| `GET` | `/api/script-test-runs/:id/logs` | 试运行的增量日志，`?after_seq=N` 游标轮询 |
+| `POST` | `/api/script-test-runs/:id/cancel` | 中断正在跑的试运行 |
 | `GET/POST/PUT/DELETE` | `/api/ssh-hosts` | SSH 主机管理 |
 | `POST` | `/api/ssh-hosts/test` | 测试连接 |
+
+**脚本试运行**：验证正在编辑的脚本，不是正式执行。发起后立即返回 `run_id`，日志边跑边用同一套游标语义轮询，运行中可中断。试运行只存在服务内存里——不写执行记录、不进「执行日志」、重启即丢，日志按 `LOG_TAIL_BYTES` 保留尾部，超时固定 5 分钟，最多 3 个并发（超出返回 `429`，不排队）。跑更久的任务请配成异步 Hook。
 
 ### 外部只读 API（凭 API token）
 
