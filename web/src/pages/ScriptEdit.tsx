@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Form, Input, Select, Button, Card, message, Space, Tag, Radio, Alert, Popconfirm } from 'antd'
 import { PlayCircleOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -7,6 +7,12 @@ import type { SSHHost } from '../api/client'
 import LogStreamView from '../components/LogStreamView'
 
 const { TextArea } = Input
+
+// The run id survives a page reload so the log can be picked back up; the
+// server keeps a finished run readable for a few minutes for exactly this.
+// sessionStorage rather than localStorage: a run belongs to this tab's editing
+// session, not to the browser.
+const testRunStorageKey = (scriptId: string) => `script-test-run:${scriptId}`
 
 const testRunStatus: Record<string, { color: string; label: string }> = {
   running: { color: 'blue', label: '运行中' },
@@ -29,13 +35,37 @@ export default function ScriptEdit() {
   const navigate = useNavigate()
   const { id } = useParams()
 
+  // runId also lives in sessionStorage; the ref mirrors state for the cleanup
+  // below, which runs after the state setter may have been lost to a render.
+  const runIdRef = useRef<string | null>(null)
+  const storageKey = testRunStorageKey(id ?? 'new')
+
   useEffect(() => {
     sshHostApi.list().then(res => setSSHHosts(res.data)).catch(() => {})
     if (id && id !== 'new') {
       setIsNew(false)
       loadScript(id)
     }
-  }, [id])
+    // A run started before a reload is still on the server; take its id back.
+    const stored = sessionStorage.getItem(storageKey)
+    if (stored) {
+      runIdRef.current = stored
+      setRunId(stored)
+      setTesting(true)
+    }
+  }, [id, storageKey])
+
+  // Leaving the page (unmount, not reload) means the run is no longer wanted:
+  // the log is gone and nothing can cancel it later, so stop it on the way out.
+  useEffect(() => {
+    return () => {
+      const orphan = runIdRef.current
+      if (orphan) {
+        sessionStorage.removeItem(storageKey)
+        scriptTestRunApi.cancel(orphan).catch(() => {})
+      }
+    }
+  }, [storageKey])
 
   const loadScript = async (scriptId: string) => {
     try {
@@ -75,6 +105,7 @@ export default function ScriptEdit() {
     const values = form.getFieldsValue()
     setTesting(true)
     setRunId(null)
+    runIdRef.current = null
     try {
       const args = values.test_args?.split('\n').map((s: string) => s.trim()).filter(Boolean) || []
       const res = await scriptTestRunApi.start({
@@ -85,6 +116,8 @@ export default function ScriptEdit() {
       })
       setStatus(res.data.status)
       setRunId(res.data.run_id)
+      runIdRef.current = res.data.run_id
+      sessionStorage.setItem(storageKey, res.data.run_id)
     } catch (error: any) {
       message.error(error.response?.data?.error || '试运行失败')
       setTesting(false)
@@ -92,6 +125,9 @@ export default function ScriptEdit() {
   }
 
   const handleCancelTest = async () => {
+    // The run id can still be on its way from the start request; without it
+    // there is nothing to aim the cancel at, and the button is disabled until
+    // it lands.
     if (!runId) return
     try {
       await scriptTestRunApi.cancel(runId)
@@ -220,7 +256,9 @@ if ($code -ne 0) { exit $code }`}
                 description="本地执行会连同子进程一起终止；已脱离 SSH 会话的远端进程无法中断"
                 onConfirm={handleCancelTest}
               >
-                <Button danger>中断</Button>
+                <Button danger disabled={!runId}>
+                  中断
+                </Button>
               </Popconfirm>
             ) : (
               <Button icon={<PlayCircleOutlined />} onClick={handleTest}>
@@ -246,7 +284,17 @@ if ($code -ne 0) { exit $code }`}
               fetchPage={async afterSeq => (await scriptTestRunApi.logs(runId, afterSeq)).data}
               onStatus={(runStatus, finished) => {
                 setStatus(runStatus)
-                if (finished) setTesting(false)
+                if (finished) {
+                  setTesting(false)
+                  sessionStorage.removeItem(storageKey)
+                }
+              }}
+              onStreamFailed={() => {
+                // The run is unreachable — server restarted or it was evicted.
+                // Whatever state it was in, it is no longer this page's problem.
+                setTesting(false)
+                setStatus('failed')
+                sessionStorage.removeItem(storageKey)
               }}
               renderEmpty={() => '(无输出)'}
             />

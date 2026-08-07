@@ -199,8 +199,16 @@ func (h *ScriptHandler) StartTestRun(c *gin.Context) {
 
 	run, err := h.testRuns.start()
 	if err != nil {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
-		return
+		// The slot this run would have taken is held by one nobody may still be
+		// watching. Stopping the oldest makes room rather than leaving the
+		// button dead until some orphaned run's own timeout.
+		if h.testRuns.cancelOldestRunning() {
+			run, err = h.testRuns.start()
+		}
+		if err != nil {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	go func() {
@@ -225,23 +233,24 @@ func (h *ScriptHandler) StartTestRun(c *gin.Context) {
 
 // testRunOptions renders the settings one test run executes under. The run is
 // its own log sink, so its output is readable while it is still being
-// produced, and its own cancel switch. The time budget is fixed: a test run
-// validates a script that is being edited, and anything that legitimately runs
-// longer belongs to an asynchronous hook.
+// produced, and its own cancel switch. TailBytes stays at zero: the sink
+// already keeps the log, and buffering the same output a second time into
+// aggregates nobody reads would only double what a chatty run pins down. The
+// time budget is fixed: a test run validates a script that is being edited,
+// and anything that legitimately runs longer belongs to an asynchronous hook.
 func (h *ScriptHandler) testRunOptions(run *testRun) services.ExecOptions {
 	return services.ExecOptions{
 		Sink:      run,
-		TailBytes: h.logTailBytes,
+		TailBytes: 0,
 		Timeout:   services.DefaultTimeout,
 		Cancel:    run.cancel,
 	}
 }
 
 // finishTestRun records the outcome, after making sure the log explains it.
-// A run that never reached the interpreter — a rejected binary, an unreachable
-// host — produced no chunks at all, so its error is written into the log
-// itself; otherwise the box would be empty and the status alone would have to
-// account for the failure.
+// Whatever the run managed to print, a failure's reason belongs in the log too:
+// a script that wrote output and then exited non-zero would otherwise leave
+// nothing but its stdout and a bare 执行失败 tag, with no exit code in sight.
 func finishTestRun(run *testRun, result *services.ExecuteResult) {
 	switch {
 	case result.Canceled:
@@ -250,8 +259,11 @@ func finishTestRun(run *testRun, result *services.ExecuteResult) {
 		markCanceled(run)
 	case result.TimedOut:
 		run.WriteChunk(services.StreamStderr, "\n--- 执行超时 ---\n")
-	case !result.Success && result.Error != "" && run.empty():
-		run.WriteChunk(services.StreamStderr, result.Error)
+	case !result.Success && result.Error != "":
+		// The error is the exit reason (e.g. "exit status 1") when the script
+		// said nothing on stderr, and the stderr text itself otherwise. Either
+		// way it is the last word on why the run failed.
+		run.WriteChunk(services.StreamStderr, "\n"+result.Error+"\n")
 	}
 	run.finish(testRunStatus(result))
 }

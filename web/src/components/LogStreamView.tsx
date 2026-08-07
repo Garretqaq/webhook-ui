@@ -5,6 +5,10 @@ import type { ExecutionLogChunk, ExecutionLogs } from '../api/client'
 const { Text } = Typography
 
 const POLL_INTERVAL_MS = 2000
+// A transient error (server restart, proxy hiccup, dropped connection) should
+// not end the stream; but a run that is gone for good must not be polled
+// forever either. Three misses over ~6s separates the two.
+const MAX_CONSECUTIVE_FAILURES = 3
 
 export const logBoxStyle: React.CSSProperties = {
   background: '#1e1e1e',
@@ -31,6 +35,11 @@ interface Props {
   onFinished?: () => void
   /** Called after every poll, so a caller can show the source's own status. */
   onStatus?: (status: string, finished: boolean) => void
+  /**
+   * Called when polling has failed enough times in a row that the stream is
+   * given up on. The caller can release whatever state was tied to the run.
+   */
+  onStreamFailed?: () => void
   /** Rendered inside the log box when a finished source produced no chunks. */
   renderEmpty: () => React.ReactNode
 }
@@ -50,6 +59,7 @@ export default function LogStreamView({
   initiallyFinished,
   onFinished,
   onStatus,
+  onStreamFailed,
   renderEmpty,
 }: Props) {
   const [chunks, setChunks] = useState<ExecutionLogChunk[]>([])
@@ -67,6 +77,8 @@ export default function LogStreamView({
   finishedRef.current = onFinished
   const statusRef = useRef(onStatus)
   statusRef.current = onStatus
+  const streamFailedRef = useRef(onStreamFailed)
+  streamFailedRef.current = onStreamFailed
   // Read through a ref as well: it only decides the starting state and whether
   // onFinished still owes a call, so a later flip must not restart the stream.
   const startedFinishedRef = useRef(initiallyFinished)
@@ -74,6 +86,7 @@ export default function LogStreamView({
   useEffect(() => {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout>
+    let consecutiveFailures = 0
 
     cursor.current = 0
     startedFinishedRef.current = initiallyFinished
@@ -86,6 +99,7 @@ export default function LogStreamView({
       try {
         const data = await fetchRef.current(cursor.current)
         if (cancelled) return
+        consecutiveFailures = 0
 
         // oldest_seq above our cursor means the head rolled off before we read
         // it. Say so rather than silently splicing a hole into the output.
@@ -106,10 +120,20 @@ export default function LogStreamView({
         } else if (!data.finished) {
           timer = setTimeout(poll, POLL_INTERVAL_MS)
         } else if (!startedFinishedRef.current) {
-          finishedRef.current?.()
+          // The caller may answer with another fetch (an execution refetching
+          // its record); a failure there is the same failure as any other poll,
+          // so it belongs inside this try.
+          await finishedRef.current?.()
         }
       } catch {
-        if (!cancelled) setFailed(true)
+        if (cancelled) return
+        consecutiveFailures++
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          setFailed(true)
+          streamFailedRef.current?.()
+          return
+        }
+        timer = setTimeout(poll, POLL_INTERVAL_MS)
       }
     }
 

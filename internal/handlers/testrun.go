@@ -24,10 +24,14 @@ const (
 	testRunRetention = 5 * time.Minute
 	// testRunSweepInterval is how often expired runs are dropped.
 	testRunSweepInterval = time.Minute
+	// maxTestRunChunks bounds the number of retained records, not just their
+	// bytes. A script writing one byte per read would otherwise stay inside the
+	// byte cap while piling up millions of ExecutionLogChunk structs.
+	maxTestRunChunks = 20000
 )
 
 // ErrTooManyTestRuns is returned when the concurrency cap is already taken.
-var ErrTooManyTestRuns = errors.New("too many script test runs are already running")
+var ErrTooManyTestRuns = errors.New("同时进行的试运行已达上限，请稍后再试")
 
 // testRun is one test run's live state: its log, its status, and the switch
 // that stops it. It is also the LogSink the executor writes into, which is
@@ -41,8 +45,8 @@ type testRun struct {
 	retained   int
 	limitBytes int
 	status     string
+	startedAt  time.Time
 	finishedAt time.Time
-	canceled   bool
 
 	cancel     chan struct{}
 	cancelOnce sync.Once
@@ -50,9 +54,12 @@ type testRun struct {
 
 func newTestRun(limitBytes int) *testRun {
 	return &testRun{
-		id:         uuid.New().String()[:8],
+		// The full UUID stays the key: truncating it for brevity would let a
+		// collision silently replace a live run's log and cancel switch.
+		id:         uuid.New().String(),
 		limitBytes: limitBytes,
 		status:     models.StatusRunning,
+		startedAt:  time.Now(),
 		cancel:     make(chan struct{}),
 	}
 }
@@ -68,10 +75,16 @@ func (r *testRun) WriteChunk(stream, chunk string) {
 
 	// Drop the oldest chunks until the retained size is back under the cap. The
 	// newest is never dropped: one oversized chunk would otherwise leave the
-	// client with nothing at all. Sequence numbers are never reused, so a
-	// client's cursor stays valid across the roll-off and the gap stays
-	// visible as a jump in the oldest sequence it is told about.
-	for r.limitBytes > 0 && r.retained > r.limitBytes && len(r.chunks) > 1 {
+	// client with nothing at all. The count cap sits beside the byte cap
+	// because the byte cap alone ignores the per-record overhead of the struct
+	// itself. Sequence numbers are never reused, so a client's cursor stays
+	// valid across the roll-off and the gap stays visible as a jump in the
+	// oldest sequence it is told about.
+	for r.retained > 0 && r.limitBytes > 0 && r.retained > r.limitBytes && len(r.chunks) > 1 {
+		r.retained -= len(r.chunks[0].Text)
+		r.chunks = r.chunks[1:]
+	}
+	for len(r.chunks) > maxTestRunChunks {
 		r.retained -= len(r.chunks[0].Text)
 		r.chunks = r.chunks[1:]
 	}
@@ -126,15 +139,6 @@ func (r *testRun) finish(status string) {
 	r.finishedAt = time.Now()
 }
 
-// empty reports whether the run has produced no output at all — including
-// output that was produced and then rolled off, which is why the sequence
-// counter answers this rather than the retained chunks.
-func (r *testRun) empty() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.seq == 0
-}
-
 func (r *testRun) running() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -145,6 +149,15 @@ func (r *testRun) statusNow() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.status
+}
+
+// startedBefore reports whether this run began earlier than the other. The
+// registry holds its own lock while comparing, so no run's state can change
+// mid-comparison.
+func (r *testRun) startedBefore(other *testRun) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.startedAt.Before(other.startedAt)
 }
 
 // expired reports whether a finished run has outlived the window in which
@@ -165,7 +178,6 @@ func (r *testRun) requestCancel() bool {
 		r.mu.Unlock()
 		return false
 	}
-	r.canceled = true
 	r.mu.Unlock()
 
 	r.cancelOnce.Do(func() { close(r.cancel) })
@@ -204,6 +216,31 @@ func (g *TestRunRegistry) start() (*testRun, error) {
 	run := newTestRun(g.limitBytes)
 	g.runs[run.id] = run
 	return run, nil
+}
+
+// cancelOldestRunning stops the longest-running unfinished run, making room
+// for a new one. A run whose run_id the client lost would otherwise hold its
+// slot until its own timeout, with no way to reach it — canceling the oldest
+// is the least-surprising eviction: it has had the most time to be watched.
+// It reports whether anything was canceled.
+func (g *TestRunRegistry) cancelOldestRunning() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	var oldest *testRun
+	for _, run := range g.runs {
+		if !run.running() {
+			continue
+		}
+		if oldest == nil || run.startedBefore(oldest) {
+			oldest = run
+		}
+	}
+	if oldest == nil {
+		return false
+	}
+	oldest.requestCancel()
+	return true
 }
 
 func (g *TestRunRegistry) get(id string) (*testRun, bool) {

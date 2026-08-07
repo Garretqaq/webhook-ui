@@ -29,8 +29,8 @@ func TestTestRunOptionsStayBounded(t *testing.T) {
 	if opts.Timeout <= 0 {
 		t.Errorf("Timeout = %s; a test run must be bounded", opts.Timeout)
 	}
-	if opts.TailBytes != 1024 {
-		t.Errorf("TailBytes = %d, want the configured cap", opts.TailBytes)
+	if opts.TailBytes != 0 {
+		t.Errorf("TailBytes = %d; the sink already keeps the log, a second copy pins memory nobody reads", opts.TailBytes)
 	}
 	if opts.Sink == nil {
 		t.Error("without a sink the output could not be read until the run ended")
@@ -109,6 +109,91 @@ func TestTestRunPageSignalsMoreWhenBacklogExceedsOnePage(t *testing.T) {
 	}
 	if rest.HasMore {
 		t.Error("has_more must be false once the backlog is drained")
+	}
+}
+
+func TestTestRunRollsOffByChunkCountNotOnlyBytes(t *testing.T) {
+	// One byte per chunk: the byte cap alone would let millions of chunk
+	// records accumulate. The count cap bounds the per-record overhead.
+	run := newTestRun(0)
+	for i := 0; i < maxTestRunChunks+100; i++ {
+		run.WriteChunk(services.StreamStdout, "x")
+	}
+
+	page := run.page(0)
+	if len(page.Chunks) > maxLogChunksPerResponse {
+		t.Fatalf("first page larger than the response cap: %d", len(page.Chunks))
+	}
+	if page.OldestSeq <= 100 {
+		t.Errorf("oldest_seq = %d; the chunk count cap should have rolled off the first 100", page.OldestSeq)
+	}
+	if !page.HasMore {
+		t.Error("has_more must be true while the backlog is still paged")
+	}
+}
+
+func TestRegistryCancelOldestFreesASlot(t *testing.T) {
+	registry := NewTestRunRegistry(0)
+	var runs []*testRun
+	for i := 0; i < maxConcurrentTestRuns; i++ {
+		run, err := registry.start()
+		if err != nil {
+			t.Fatal(err)
+		}
+		runs = append(runs, run)
+	}
+
+	// Oldest is the one admitted first.
+	if !registry.cancelOldestRunning() {
+		t.Fatal("expected an eviction when the cap is taken")
+	}
+	select {
+	case <-runs[0].cancel:
+	default:
+		t.Error("the oldest run should have been the one canceled")
+	}
+	for _, run := range runs[1:] {
+		select {
+		case <-run.cancel:
+			t.Error("a newer run was canceled; only the oldest should go")
+		default:
+		}
+	}
+
+	// The canceled run has not finished yet — the executor does that — so a
+	// new start must still be refused until the outcome is recorded.
+	if _, err := registry.start(); err != ErrTooManyTestRuns {
+		t.Errorf("start after canceling but before finishing = %v, want still refused", err)
+	}
+	runs[0].finish(models.StatusCanceled)
+	if _, err := registry.start(); err != nil {
+		t.Errorf("start after the evicted run finished = %v, want admitted", err)
+	}
+}
+
+func TestFinishTestRunKeepsTheExitReasonAlongsideOutput(t *testing.T) {
+	// The script printed something, then failed. The status alone cannot say
+	// why, and the log would otherwise end with the script's own words.
+	h, _ := localScriptHandler(t)
+	r := testRunRouter(t, h)
+
+	_, runID := startTestRun(t, r, `{"interpreter":"sh","content":"echo building; exit 1"}`)
+	t.Cleanup(func() { awaitTestRunsIdle(t, h.testRuns) })
+	page := awaitTestRunLog(t, r, runID, "building")
+
+	for !page.Finished {
+		time.Sleep(50 * time.Millisecond)
+		_, page = fetchTestRunLogs(t, r, runID, 0)
+	}
+	if page.Status != models.StatusFailed {
+		t.Errorf("status = %q, want failed", page.Status)
+	}
+	var text string
+	for _, chunk := range page.Chunks {
+		text += chunk.Text
+	}
+	if !strings.Contains(text, "exit status 1") {
+		t.Errorf("the exit reason must appear in the log, got %q", text)
 	}
 }
 
