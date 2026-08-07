@@ -141,6 +141,12 @@ func (r *testRun) running() bool {
 	return r.finishedAt.IsZero()
 }
 
+func (r *testRun) statusNow() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.status
+}
+
 // expired reports whether a finished run has outlived the window in which
 // somebody might still come back to read it.
 func (r *testRun) expired(now time.Time) bool {

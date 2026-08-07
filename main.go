@@ -158,6 +158,7 @@ func buildRouter(cfg *config.Config) (*gin.Engine, error) {
 		// run does not need a saved script to exist at all.
 		auth.POST("/script-test-runs", scriptHandler.StartTestRun)
 		auth.GET("/script-test-runs/:id/logs", scriptHandler.TestRunLogs)
+		auth.POST("/script-test-runs/:id/cancel", scriptHandler.CancelTestRun)
 
 		auth.GET("/ssh-hosts", sshHostHandler.List)
 		auth.POST("/ssh-hosts", sshHostHandler.Create)

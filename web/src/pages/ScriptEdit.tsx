@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Form, Input, Select, Button, Card, message, Space, Tag, Radio, Alert } from 'antd'
+import { Form, Input, Select, Button, Card, message, Space, Tag, Radio, Alert, Popconfirm } from 'antd'
 import { PlayCircleOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import { scriptApi, scriptTestRunApi, sshHostApi } from '../api/client'
@@ -88,6 +88,16 @@ export default function ScriptEdit() {
     } catch (error: any) {
       message.error(error.response?.data?.error || '试运行失败')
       setTesting(false)
+    }
+  }
+
+  const handleCancelTest = async () => {
+    if (!runId) return
+    try {
+      await scriptTestRunApi.cancel(runId)
+      message.success('已请求中断')
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '中断失败')
     }
   }
 
@@ -204,14 +214,19 @@ if ($code -ne 0) { exit $code }`}
             <Button type="primary" htmlType="submit" loading={loading}>
               保存
             </Button>
-            <Button
-              icon={<PlayCircleOutlined />}
-              loading={testing}
-              disabled={testing}
-              onClick={handleTest}
-            >
-              试运行
-            </Button>
+            {testing ? (
+              <Popconfirm
+                title="确定中断这次试运行?"
+                description="本地执行会连同子进程一起终止；已脱离 SSH 会话的远端进程无法中断"
+                onConfirm={handleCancelTest}
+              >
+                <Button danger>中断</Button>
+              </Popconfirm>
+            ) : (
+              <Button icon={<PlayCircleOutlined />} onClick={handleTest}>
+                试运行
+              </Button>
+            )}
             <Button onClick={() => navigate('/scripts')}>取消</Button>
           </Space>
         </Form.Item>

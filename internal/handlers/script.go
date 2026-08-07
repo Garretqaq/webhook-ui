@@ -243,9 +243,14 @@ func (h *ScriptHandler) testRunOptions(run *testRun) services.ExecOptions {
 // itself; otherwise the box would be empty and the status alone would have to
 // account for the failure.
 func finishTestRun(run *testRun, result *services.ExecuteResult) {
-	if result.TimedOut {
+	switch {
+	case result.Canceled:
+		// Without a mark, a script that was stopped looks exactly like one that
+		// died on its own — which is the distinction the button exists to make.
+		markCanceled(run)
+	case result.TimedOut:
 		run.WriteChunk(services.StreamStderr, "\n--- 执行超时 ---\n")
-	} else if !result.Success && result.Error != "" && run.empty() {
+	case !result.Success && result.Error != "" && run.empty():
 		run.WriteChunk(services.StreamStderr, result.Error)
 	}
 	run.finish(testRunStatus(result))
@@ -262,4 +267,28 @@ func (h *ScriptHandler) TestRunLogs(c *gin.Context) {
 
 	afterSeq, _ := strconv.ParseInt(c.DefaultQuery("after_seq", "0"), 10, 64)
 	c.JSON(http.StatusOK, run.page(afterSeq))
+}
+
+// CancelTestRun stops a run that is still going. Locally the whole process
+// group is signalled, so a script's own children go with it; remotely the SSH
+// session is closed, which a remote process that already detached from it
+// survives — it merely stops being watched.
+func (h *ScriptHandler) CancelTestRun(c *gin.Context) {
+	run, ok := h.testRuns.get(c.Param("id"))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "test run not found"})
+		return
+	}
+
+	if !run.requestCancel() {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "test run is not running and cannot be canceled",
+			"status": run.statusNow(),
+		})
+		return
+	}
+
+	// The executing goroutine writes the final status; answering before it does
+	// keeps the request from waiting on a process that may take a moment to die.
+	c.JSON(http.StatusAccepted, gin.H{"message": "cancellation requested"})
 }

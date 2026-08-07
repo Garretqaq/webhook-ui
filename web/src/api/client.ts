@@ -138,6 +138,7 @@ export const scriptTestRunApi = {
     client.post<ScriptTestRun>('/script-test-runs', data),
   logs: (runId: string, afterSeq: number) =>
     client.get<ExecutionLogs>(`/script-test-runs/${runId}/logs`, { params: { after_seq: afterSeq } }),
+  cancel: (runId: string) => client.post(`/script-test-runs/${runId}/cancel`),
 }
 
 export const sshHostApi = {

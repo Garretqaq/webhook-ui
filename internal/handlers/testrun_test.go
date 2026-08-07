@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -169,7 +170,15 @@ func testRunRouter(t *testing.T, h *ScriptHandler) *gin.Engine {
 	r := gin.New()
 	r.POST("/script-test-runs", h.StartTestRun)
 	r.GET("/script-test-runs/:id/logs", h.TestRunLogs)
+	r.POST("/script-test-runs/:id/cancel", h.CancelTestRun)
 	return r
+}
+
+func cancelTestRun(t *testing.T, r *gin.Engine, runID string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/script-test-runs/"+runID+"/cancel", nil))
+	return w
 }
 
 func startTestRun(t *testing.T, r *gin.Engine, body string) (*httptest.ResponseRecorder, string) {
@@ -282,6 +291,65 @@ func TestTestRunThatNeverStartedExplainsItselfInTheLog(t *testing.T) {
 	}
 	if page.Chunks[len(page.Chunks)-1].Stream != services.StreamStderr {
 		t.Error("the reason belongs on stderr, where the view renders it in red")
+	}
+}
+
+func TestCancelStopsARunningTestRunAndSaysSoInTheLog(t *testing.T) {
+	h, _ := localScriptHandler(t)
+	r := testRunRouter(t, h)
+
+	// The child writes a marker file after the sleep. Killing only the shell
+	// would leave that child alive and the file would appear anyway.
+	marker := t.TempDir() + "/child-survived"
+	_, runID := startTestRun(t, r,
+		`{"interpreter":"sh","content":"(sleep 3; touch `+marker+`) & echo started; wait"}`)
+	awaitTestRunLog(t, r, runID, "started")
+
+	if w := cancelTestRun(t, r, runID); w.Code != http.StatusAccepted {
+		t.Fatalf("cancel = %d, body %s", w.Code, w.Body.String())
+	}
+
+	page := awaitTestRunLog(t, r, runID, "已被手动中断")
+	for !page.Finished {
+		time.Sleep(50 * time.Millisecond)
+		_, page = fetchTestRunLogs(t, r, runID, 0)
+	}
+	if page.Status != models.StatusCanceled {
+		t.Errorf("status = %q, want canceled — a stopped run must not read as a failed one", page.Status)
+	}
+
+	// Past the child's own sleep: if the group had survived, the file would be
+	// there by now.
+	time.Sleep(3 * time.Second)
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("the script's child outlived the cancel; the process group was not signalled")
+	}
+}
+
+func TestCancelingAFinishedTestRunConflicts(t *testing.T) {
+	h, _ := localScriptHandler(t)
+	r := testRunRouter(t, h)
+
+	_, runID := startTestRun(t, r, `{"interpreter":"sh","content":"echo done"}`)
+	page := awaitTestRunLog(t, r, runID, "done")
+	for !page.Finished {
+		time.Sleep(50 * time.Millisecond)
+		_, page = fetchTestRunLogs(t, r, runID, 0)
+	}
+
+	w := cancelTestRun(t, r, runID)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("cancel of a finished run = %d, want 409", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), models.StatusSuccess) {
+		t.Errorf("the refusal should carry the state the client can see, got %s", w.Body.String())
+	}
+}
+
+func TestCancelingAnUnknownTestRunIs404(t *testing.T) {
+	h, _ := localScriptHandler(t)
+	if w := cancelTestRun(t, testRunRouter(t, h), "nope"); w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
 	}
 }
 
