@@ -11,7 +11,6 @@ const envTableData = [
 const hmacHeaders = [
   { key: '1', header: 'X-Hub-Signature-256', format: 'sha256=<hex>', remark: 'GitHub 风格，优先匹配' },
   { key: '2', header: 'X-Signature', format: '<hex>', remark: '通用格式，可带 sha256= 前缀' },
-  { key: '3', header: 'X-Gitlab-Token', format: '<token>', remark: '明文 token 直接比对' },
 ]
 
 const guideContent = (
@@ -91,8 +90,9 @@ curl -X POST http://localhost:9000/hooks/<hook-id> \\
 
           <Title level={5}>固定 Token</Title>
           <Paragraph>
-            简单明文令牌验证，适合不能算 HMAC 的调用方（如只能配固定 header 的 SaaS）。
-            请求带 <Text code>X-Token</Text> header 或 <Text code>?token=</Text> query 参数，
+            简单明文令牌验证，适合不能算 HMAC 的调用方（如只能配固定 header 的 SaaS、GitLab Webhook）。
+            请求带 <Text code>X-Token</Text> header、<Text code>?token=</Text> query 参数
+            或 <Text code>X-Gitlab-Token</Text> header（GitLab 原生格式），
             值与配置相等才执行。留空则不验证。可与 HMAC 同时启用（两者都通过才行）。
           </Paragraph>
           <Paragraph>
@@ -100,7 +100,8 @@ curl -X POST http://localhost:9000/hooks/<hook-id> \\
   -H "X-Token: my-fixed-token" \\
   -d '{}'
 # 或
-curl -X POST "http://localhost:9000/hooks/<hook-id>?token=my-fixed-token" -d '{}'`}</pre>
+curl -X POST "http://localhost:9000/hooks/<hook-id>?token=my-fixed-token" -d '{}'
+# GitLab Webhook 直接在 GitLab 侧填 Secret Token 即可，它会以 X-Gitlab-Token 头发送`}</pre>
           </Paragraph>
 
           <Title level={5}>Payload 字段作为参数</Title>
@@ -176,60 +177,155 @@ echo "完整body: $PAYLOAD"              # pass_payload_to 选 env/both`}</pre>
   </>
 )
 
+const responseColumns = [
+  { title: '状态码', dataIndex: 'code', width: 90, render: (v: string) => <Text code>{v}</Text> },
+  { title: '场景', dataIndex: 'scene' },
+  { title: 'Body', dataIndex: 'body' },
+]
+
+const paramColumns = [
+  { title: '参数', dataIndex: 'name', width: 140, render: (v: string) => <Text code>{v}</Text> },
+  { title: '位置', dataIndex: 'where', width: 90 },
+  { title: '说明', dataIndex: 'desc' },
+]
+
+const fieldColumns = [
+  { title: '字段', dataIndex: 'name', width: 180, render: (v: string) => <Text code>{v}</Text> },
+  { title: '说明', dataIndex: 'desc' },
+]
+
+const triggerResponses = [
+  { key: '200', code: '200', scene: '同步执行成功', body: '{"message", "output"}' },
+  { key: '202', code: '202', scene: '异步执行已受理，凭 execution_id 轮询日志', body: '{"message", "execution_id", "status": "queued"}' },
+  { key: '401', code: '401', scene: 'Token / 签名校验失败', body: '{"error"}' },
+  { key: '404', code: '404', scene: 'Hook 不存在', body: '{"error"}' },
+  { key: '409', code: '409', scene: '同一异步 Hook 上次执行未结束', body: '{"error", "running_execution_id"}' },
+  { key: '429', code: '429', scene: '异步并发与队列均满', body: '{"error"}' },
+  { key: '500', code: '500', scene: '同步执行失败', body: '{"error", "output"}' },
+]
+
+const execListParams = [
+  { key: 'limit', name: 'limit', where: 'query', desc: '每页条数，默认 50' },
+  { key: 'offset', name: 'offset', where: 'query', desc: '偏移量，默认 0' },
+  { key: 'hook_id', name: 'hook_id', where: 'query', desc: '按 Hook ID 过滤' },
+]
+
+const execDetailParams = [
+  { key: 'id', name: 'id', where: 'path', desc: '执行 ID' },
+]
+
+const logParams = [
+  { key: 'id', name: 'id', where: 'path', desc: '执行 ID' },
+  { key: 'after_seq', name: 'after_seq', where: 'query', desc: '游标，默认 0；之后带上次响应的 next_seq' },
+]
+
+const execListResponses = [
+  { key: '200', code: '200', scene: '成功', body: 'Execution 数组（不含 output / error，字段见下表）' },
+]
+
+const execDetailResponses = [
+  { key: '200', code: '200', scene: '成功', body: '完整 Execution（含 output / error）' },
+  { key: '404', code: '404', scene: '执行记录不存在', body: '{"error"}' },
+]
+
+const logResponses = [
+  { key: '200', code: '200', scene: '成功', body: '分页日志对象（结构见下）' },
+  { key: '404', code: '404', scene: '执行记录不存在', body: '{"error"}' },
+]
+
+const execFields = [
+  { key: 'id', name: 'id', desc: '执行 ID（整数）' },
+  { key: 'hook_id', name: 'hook_id', desc: '触发的 Hook' },
+  { key: 'trigger_source', name: 'trigger_source', desc: '调用方 IP' },
+  { key: 'exec_target', name: 'exec_target', desc: 'local，或 SSH 主机的 user@host:port' },
+  { key: 'status', name: 'status', desc: 'queued / running / success / failed / timeout / canceled / interrupted' },
+  { key: 'output', name: 'output / error', desc: '输出与错误；仅详情接口返回，列表省略，按 LOG_TAIL_BYTES 截尾' },
+  { key: 'started_at', name: 'started_at / finished_at', desc: '起止时间（RFC3339），未结束时 finished_at 缺省' },
+]
+
+const logPageFields = [
+  { key: 'chunks', name: 'chunks', desc: '日志块数组，每块带 seq 与 stream（stdout/stderr）；单页最多 500 块' },
+  { key: 'next_seq', name: 'next_seq', desc: '下次轮询的 after_seq 起点' },
+  { key: 'oldest_seq', name: 'oldest_seq', desc: '仍在的最老序号；游标比它小说明中间有一段已被滚删' },
+  { key: 'has_more', name: 'has_more', desc: '还有积压未拉完，应立即续拉' },
+  { key: 'status', name: 'status / finished', desc: '执行状态与是否结束' },
+]
+
 const apiContent = (
   <>
         <Typography>
           <Title level={3}>API 接口</Title>
           <Paragraph>
-            面向外部系统（CI、监控等）。无需登录，凭 <Text code>X-API-Token</Text> 请求头访问，
-            作用域仅限只读执行记录与日志。
+            面向外部系统（CI、监控等）。分两类入口：触发执行按 Hook 配置的 Token / HMAC 校验（无需登录）；
+            查询类接口凭 <Text code>X-API-Token</Text> 请求头访问，作用域仅限只读执行记录与日志。
           </Paragraph>
+
+          <Title level={4}>通用约定</Title>
+          <ul>
+            <li>所有响应均为 JSON；错误统一返回 <Text code>{'{"error": "原因"}'}</Text></li>
+            <li>时间戳为 RFC3339 格式</li>
+            <li>查询类接口：token 不符返回 <Text code>401</Text>；未生成 token 一律返回 <Text code>403</Text></li>
+          </ul>
 
           <Title level={4}>获取 Token</Title>
           <Paragraph>
-            在「设置」页生成。重新生成会使旧 token 立即失效，外部调用全部中断。
-            通过请求头传递：<Text code>X-API-Token: &lt;token&gt;</Text>。
-            未配置时外部访问一律 403。
+            在「设置」页生成，通过请求头传递：<Text code>X-API-Token: &lt;token&gt;</Text>。
+            重新生成会使旧 token 立即失效，外部调用全部中断。
           </Paragraph>
 
-          <Title level={4}>查询执行记录</Title>
+          <Title level={4}>触发执行</Title>
+          <Paragraph code copyable>
+            POST /hooks/&lt;hook-id&gt;
+          </Paragraph>
+          <Paragraph>
+            也支持 <Text code>GET</Text>。认证按 Hook 配置：固定 Token（<Text code>X-Token</Text> /
+            <Text code> X-Gitlab-Token</Text> 请求头或 <Text code>?token=</Text> 查询参数）
+            或 HMAC 签名（<Text code>X-Signature</Text> / <Text code>X-Hub-Signature-256</Text>），配置方式见「字段说明」tab。
+          </Paragraph>
+          <Paragraph>响应：</Paragraph>
+          <Table size="small" pagination={false} columns={responseColumns} dataSource={triggerResponses} />
+          <Paragraph style={{ marginTop: 12 }}>
+            同步 Hook 跑完才返回（200 / 500）；异步 Hook 立即返回 202，凭 <Text code>execution_id</Text> 轮询下方日志接口。
+          </Paragraph>
+
+          <Title level={4}>查询执行记录列表</Title>
           <Paragraph code copyable>
             GET /api/external/executions
           </Paragraph>
-          <Paragraph>
-            支持 <Text code>limit</Text>、<Text code>offset</Text>、<Text code>hook_id</Text> 过滤。
-            单条：<Text code>GET /api/external/executions/&lt;id&gt;</Text>。
-          </Paragraph>
+          <Table size="small" pagination={false} columns={paramColumns} dataSource={execListParams} />
+          <Paragraph style={{ marginTop: 12 }}>响应：</Paragraph>
+          <Table size="small" pagination={false} columns={responseColumns} dataSource={execListResponses} />
+          <Paragraph style={{ marginTop: 12 }}>Execution 字段：</Paragraph>
+          <Table size="small" pagination={false} columns={fieldColumns} dataSource={execFields} />
 
-          <Title level={4}>轮询日志</Title>
+          <Title level={4}>查询执行详情</Title>
+          <Paragraph code copyable>
+            GET /api/external/executions/&lt;id&gt;
+          </Paragraph>
+          <Table size="small" pagination={false} columns={paramColumns} dataSource={execDetailParams} />
+          <Paragraph style={{ marginTop: 12 }}>响应：</Paragraph>
+          <Table size="small" pagination={false} columns={responseColumns} dataSource={execDetailResponses} />
+
+          <Title level={4}>轮询执行日志</Title>
           <Paragraph code copyable>
             GET /api/external/executions/&lt;id&gt;/logs?after_seq=0
           </Paragraph>
-          <Paragraph>
-            用响应里的 <Text code>next_seq</Text> 作为下一轮的 <Text code>after_seq</Text> 继续拉。
-            响应字段：
-          </Paragraph>
-          <ul>
-            <li><Text code>chunks</Text> — 增量日志块，每块带 <Text code>seq</Text> 与 <Text code>stream</Text>（stdout/stderr）</li>
-            <li><Text code>next_seq</Text> — 下次轮询的起点</li>
-            <li><Text code>oldest_seq</Text> — 当前仍在的最老序号。日志按尾部保留，旧块会滚删；若你的游标小于它，说明中间丢了一段</li>
-            <li><Text code>has_more</Text> — 还有积压未拉完，立即续拉（单次响应封顶 500 块）</li>
-            <li><Text code>status</Text> / <Text code>finished</Text> — 执行状态与是否结束</li>
-          </ul>
-          <Paragraph>
+          <Table size="small" pagination={false} columns={paramColumns} dataSource={logParams} />
+          <Paragraph style={{ marginTop: 12 }}>响应：</Paragraph>
+          <Table size="small" pagination={false} columns={responseColumns} dataSource={logResponses} />
+          <Paragraph style={{ marginTop: 12 }}>200 时的 body：</Paragraph>
+          <pre style={{ background: '#f6f8fa', padding: 12, borderRadius: 6 }}>{`{
+  "chunks": [{ "seq": 1, "stream": "stdout", "text": "..." }],
+  "next_seq": 42,
+  "oldest_seq": 3,
+  "has_more": false,
+  "status": "success",
+  "finished": true
+}`}</pre>
+          <Table size="small" pagination={false} columns={fieldColumns} dataSource={logPageFields} />
+          <Paragraph style={{ marginTop: 12 }}>
             轮询策略：执行中每 2 秒拉一次；<Text code>has_more</Text> 为真时不停顿续拉；
             <Text code>finished</Text> 为真且无积压后停止。
-          </Paragraph>
-
-          <Title level={4}>异步触发</Title>
-          <Paragraph>
-            Hook 勾选「异步执行」后，触发接口立即返回 <Text code>202</Text>，
-            body 带 <Text code>execution_id</Text> 与 <Text code>status</Text>（<Text code>queued</Text>），
-            不等脚本跑完。同步 Hook 仍返回 <Text code>200</Text> 并在 body 里带完整输出——两种模式从状态码即可区分。
-          </Paragraph>
-          <Paragraph>
-            同一异步 Hook 上一次未结束时再次触发，返回 <Text code>409</Text>，
-            body 带 <Text code>running_execution_id</Text> 指向正在跑的那次。并发槽与队列均满时返回 <Text code>429</Text>。
           </Paragraph>
 
           <Title level={4}>执行状态机</Title>

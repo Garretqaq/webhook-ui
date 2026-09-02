@@ -223,8 +223,8 @@ webhook-ui/
 #### `POST /hooks/:id`（也支持 GET）
 
 - **认证**（按 Hook 配置，Token / HMAC 可单用或同用）：
-  - 固定 Token：`X-Token` 请求头或 `?token=` 查询参数，值相等才执行
-  - HMAC 签名：`X-Signature`（通用）/ `X-Hub-Signature-256`（GitHub）/ `X-Gitlab-Token`（GitLab），算法 `sha1`/`sha256`/`sha512`，hex 编码
+  - 固定 Token：`X-Token` 请求头、`?token=` 查询参数或 `X-Gitlab-Token` 请求头（GitLab），值相等才执行
+  - HMAC 签名：`X-Signature`（通用）/ `X-Hub-Signature-256`（GitHub），算法 `sha1`/`sha256`/`sha512`，hex 编码
 - **请求 Body**：任意。Payload 按注入规则传给脚本/命令（见「传参给脚本/命令」）
 - **响应**：
 

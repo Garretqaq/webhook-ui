@@ -70,6 +70,12 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 		if token == "" {
 			token = c.Query("token")
 		}
+		if token == "" {
+			// GitLab webhooks deliver the secret token as plaintext in
+			// X-Gitlab-Token, which belongs here — in the HMAC path the same
+			// header is compared against a hex digest and can never match.
+			token = c.GetHeader("X-Gitlab-Token")
+		}
 		if subtle.ConstantTimeCompare([]byte(token), []byte(hook.TriggerToken)) != 1 {
 			h.logExecution(hookID, c.ClientIP(), "failed", "", "invalid trigger token")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})

@@ -236,7 +236,7 @@ export default function HookEdit() {
         <Form.Item
           name="trigger_token"
           label="固定 Token"
-          extra="留空则不验证。请求需带 X-Token header 或 ?token= 参数，值相等才执行（适合不能算 HMAC 的调用方）"
+          extra="留空则不验证。请求需带 X-Token / X-Gitlab-Token header 或 ?token= 参数，值相等才执行（适合不能算 HMAC 的调用方，如 GitLab Webhook）"
         >
           <Input.Password placeholder="固定访问令牌" />
         </Form.Item>
