@@ -128,16 +128,18 @@ func migrateTo(target int) error {
 	}
 
 	for v := version; v < target; v++ {
+		// v11 -> v12 drops the trigger token of mixed-auth hooks; those
+		// clients lose access, so the loss is visible in the startup log.
+		// Counted before the step runs — after it, the UPDATE has already
+		// cleared the very state being counted.
+		if v == 11 {
+			if n := mixedAuthHooks(); n > 0 {
+				log.Printf("migration to v12: clearing trigger_token on %d mixed-auth hook(s), HMAC auth kept", n)
+			}
+		}
 		for i, m := range migrations[v] {
 			if _, err := DB.Exec(m); err != nil {
 				return fmt.Errorf("migration to v%d, step %d: %w", v+1, i, err)
-			}
-		}
-		// v11 -> v12 drops the trigger token of mixed-auth hooks; those
-		// clients lose access, so the loss is visible in the startup log.
-		if v == 11 {
-			if n := mixedAuthHooks(); n > 0 {
-				log.Printf("migration to v12: cleared trigger_token on %d mixed-auth hook(s), HMAC auth kept", n)
 			}
 		}
 	}
@@ -150,7 +152,7 @@ func migrateTo(target int) error {
 }
 
 // mixedAuthHooks counts hooks that carry both an HMAC secret and a trigger
-// token — called right after that state was made unreachable.
+// token — called just before that state is migrated away.
 func mixedAuthHooks() int {
 	var n int
 	if err := DB.QueryRow(
