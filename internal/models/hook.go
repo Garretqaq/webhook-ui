@@ -73,6 +73,9 @@ func (h *Hook) Validate() error {
 	if h.Command == "" && h.ScriptID == "" {
 		return errors.New("command or script is required")
 	}
+	if h.HMACSecret != "" && h.TriggerToken != "" {
+		return errors.New("hmac_secret and trigger_token are mutually exclusive: pick one auth method")
+	}
 	if h.TimeoutSeconds < 0 {
 		return errors.New("timeout_seconds must be 0 (no limit) or positive")
 	}

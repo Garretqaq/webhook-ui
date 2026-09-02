@@ -61,6 +61,7 @@ const guideContent = (
             密钥只存服务端，请求方用同一密钥对 <Text strong>原始请求体字节</Text> 计算
             <Text code> hex(HMAC(secret, body)) </Text>
             ，结果放签名 header 传入。留空密钥则不验签。
+            与固定 Token 二选一，同时配置会被拒绝。
           </Paragraph>
           <Table
             size="small"
@@ -94,7 +95,7 @@ curl -X POST http://localhost:9000/hooks/<hook-id> \\
             简单明文令牌验证，适合不能算 HMAC 的调用方（如只能配固定 header 的 SaaS、GitLab Webhook）。
             请求带 <Text code>X-Token</Text> header、<Text code>?token=</Text> query 参数
             或 <Text code>X-Gitlab-Token</Text> header（GitLab 原生格式），
-            值与配置相等才执行。留空则不验证。可与 HMAC 同时启用（两者都通过才行）。
+            值与配置相等才执行。留空则不验证。与 HMAC 二选一，同时配置会被拒绝。
           </Paragraph>
           <Paragraph>
             <pre style={{ background: '#f6f8fa', padding: 12, borderRadius: 6 }}>{`curl -X POST http://localhost:9000/hooks/<hook-id> \\
