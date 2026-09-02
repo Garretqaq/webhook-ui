@@ -14,6 +14,7 @@ export default function HookEdit() {
   const [sshHosts, setSSHHosts] = useState<SSHHost[]>([])
   const execMode = Form.useWatch('exec_mode', form)
   const execLocation = Form.useWatch('exec_location', form)
+  const authMode = Form.useWatch('auth_mode', form)
   const navigate = useNavigate()
   const { id } = useParams()
 
@@ -33,6 +34,7 @@ export default function HookEdit() {
         ...res.data,
         exec_mode: res.data.script_id ? 'script' : 'command',
         exec_location: res.data.ssh_host_id ? 'ssh' : 'local',
+        auth_mode: res.data.hmac_secret ? 'hmac' : res.data.trigger_token ? 'token' : 'none',
         pass_arguments: res.data.pass_arguments?.join('\n') || '',
         pass_headers: res.data.pass_headers?.join('\n') || '',
       })
@@ -45,16 +47,21 @@ export default function HookEdit() {
     setLoading(true)
     try {
       const useScript = values.exec_mode === 'script'
+      // Only the chosen auth method's credential is sent, so the backend's
+      // mutual-exclusion rule can never trip on a form submission.
       const data = {
         ...values,
         command: useScript ? '' : values.command,
         script_id: useScript ? values.script_id : '',
         ssh_host_id: values.exec_location === 'ssh' ? values.ssh_host_id : '',
+        hmac_secret: values.auth_mode === 'hmac' ? values.hmac_secret : '',
+        trigger_token: values.auth_mode === 'token' ? values.trigger_token : '',
         pass_arguments: values.pass_arguments?.split('\n').filter((s: string) => s.trim()) || [],
         pass_headers: values.pass_headers?.split('\n').filter((s: string) => s.trim()) || [],
       }
       delete data.exec_mode
       delete data.exec_location
+      delete data.auth_mode
 
       if (isNew) {
         await hookApi.create(data)
@@ -82,6 +89,7 @@ export default function HookEdit() {
           pass_payload_to: '',
           exec_mode: 'command',
           exec_location: 'local',
+          auth_mode: 'none',
           async: false,
           timeout_seconds: 300,
         }}
@@ -217,29 +225,51 @@ export default function HookEdit() {
           <Input placeholder="OK" autoComplete="nope" />
         </Form.Item>
 
-        <Form.Item
-          name="hmac_secret"
-          label="HMAC 密钥"
-          extra="留空则不验证签名"
-        >
-          <Input.Password placeholder="签名验证密钥" autoComplete="new-password" />
+        <Form.Item name="auth_mode" label="鉴权方式" extra="与固定 Token 二选一；都不选则任何人都可触发">
+          <Radio.Group
+            onChange={e => {
+              const mode = e.target.value
+              // Switching methods drops the other credential so the backend
+              // never sees both at once.
+              if (mode !== 'hmac') form.setFieldValue('hmac_secret', '')
+              if (mode !== 'token') form.setFieldValue('trigger_token', '')
+            }}
+          >
+            <Radio.Button value="none">无鉴权</Radio.Button>
+            <Radio.Button value="hmac">HMAC 签名</Radio.Button>
+            <Radio.Button value="token">固定 Token</Radio.Button>
+          </Radio.Group>
         </Form.Item>
 
-        <Form.Item name="hmac_algorithm" label="HMAC 算法">
-          <Select>
-            <Select.Option value="sha1">SHA1</Select.Option>
-            <Select.Option value="sha256">SHA256</Select.Option>
-            <Select.Option value="sha512">SHA512</Select.Option>
-          </Select>
-        </Form.Item>
+        {authMode === 'hmac' && (
+          <>
+            <Form.Item
+              name="hmac_secret"
+              label="HMAC 密钥"
+              extra="留空则不验证签名"
+            >
+              <Input.Password placeholder="签名验证密钥" autoComplete="new-password" />
+            </Form.Item>
 
-        <Form.Item
-          name="trigger_token"
-          label="固定 Token"
-          extra="留空则不验证。请求需带 X-Token / X-Gitlab-Token header 或 ?token= 参数，值相等才执行（适合不能算 HMAC 的调用方，如 GitLab Webhook）"
-        >
-          <Input.Password placeholder="固定访问令牌" />
-        </Form.Item>
+            <Form.Item name="hmac_algorithm" label="HMAC 算法">
+              <Select>
+                <Select.Option value="sha1">SHA1</Select.Option>
+                <Select.Option value="sha256">SHA256</Select.Option>
+                <Select.Option value="sha512">SHA512</Select.Option>
+              </Select>
+            </Form.Item>
+          </>
+        )}
+
+        {authMode === 'token' && (
+          <Form.Item
+            name="trigger_token"
+            label="固定 Token"
+            extra="请求需带 X-Token / X-Gitlab-Token header 或 ?token= 参数，值相等才执行（适合不能算 HMAC 的调用方，如 GitLab Webhook）"
+          >
+            <Input.Password placeholder="固定访问令牌" autoComplete="new-password" />
+          </Form.Item>
+        )}
 
         <Form.Item
           name="pass_arguments"
