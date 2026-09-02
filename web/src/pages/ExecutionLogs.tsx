@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Modal, Typography, Select, Space, Popconfirm, message } from 'antd'
+import { Table, Tag, Button, Modal, Typography, Select, Space, Popconfirm, message, Alert } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { executionApi, hookApi } from '../api/client'
 import type { Execution, Hook } from '../api/client'
@@ -26,6 +26,7 @@ export default function ExecutionLogs() {
   const [selectedHook, setSelectedHook] = useState<string>()
   const [detailVisible, setDetailVisible] = useState(false)
   const [currentExecution, setCurrentExecution] = useState<Execution>()
+  const [detailError, setDetailError] = useState(false)
 
   const loadData = async () => {
     setLoading(true)
@@ -55,6 +56,19 @@ export default function ExecutionLogs() {
   const showDetail = (record: Execution) => {
     setCurrentExecution(record)
     setDetailVisible(true)
+    setDetailError(false)
+    // The list row carries no output (the payload would be megabytes), so the
+    // full record is fetched separately to fill the log view's fallback. A
+    // stale response — the user closed the modal or opened another row before
+    // it landed — must not overwrite whichever record is showing now.
+    executionApi
+      .get(record.id)
+      .then(res => {
+        if (currentExecution?.id === res.data.id) setCurrentExecution(res.data)
+      })
+      .catch(() => {
+        if (currentExecution?.id === record.id) setDetailError(true)
+      })
   }
 
   const cancelExecution = async (id: number) => {
@@ -222,7 +236,11 @@ export default function ExecutionLogs() {
               <Text strong>输出: </Text>
               <span style={{ float: 'right' }}>{cancelButton(currentExecution)}</span>
             </Paragraph>
-            <ExecutionLogView execution={currentExecution} />
+            {detailError ? (
+              <Alert type="error" showIcon message="输出加载失败，请重试" />
+            ) : (
+              <ExecutionLogView execution={currentExecution} />
+            )}
           </div>
         )}
       </Modal>

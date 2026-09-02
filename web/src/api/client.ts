@@ -39,7 +39,8 @@ export interface Execution {
   trigger_source: string
   exec_target: string
   status: string
-  output: string
+  /** Detail endpoint only — the list omits it, it can be megabytes. */
+  output?: string
   error: string
   started_at: string
   finished_at?: string
