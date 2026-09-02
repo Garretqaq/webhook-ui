@@ -10,7 +10,8 @@ const envTableData = [
 
 const hmacHeaders = [
   { key: '1', header: 'X-Hub-Signature-256', format: 'sha256=<hex>', remark: 'GitHub 风格，优先匹配' },
-  { key: '2', header: 'X-Signature', format: '<hex>', remark: '通用格式，可带 sha256= 前缀' },
+  { key: '2', header: 'X-Gitlab-Token', format: '<hex>', remark: 'GitLab 风格；启用 HMAC 时按签名比对，启用固定 Token 时按明文比对' },
+  { key: '3', header: 'X-Signature', format: '<hex>', remark: '通用格式，可带 sha256= 前缀' },
 ]
 
 const guideContent = (
