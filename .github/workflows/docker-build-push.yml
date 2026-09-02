@@ -51,3 +51,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Aliyun ACR rejects the OCI empty/attestation manifests BuildKit
+          # attaches by default ("unknown manifest class"), so both are off.
+          provenance: false
+          sbom: false
