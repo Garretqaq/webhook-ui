@@ -1,8 +1,11 @@
 package database
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+)
 
-const schemaVersion = 11
+const schemaVersion = 12
 
 func Migrate() error {
 	return migrateTo(schemaVersion)
@@ -119,12 +122,22 @@ func migrateTo(target int) error {
 				value TEXT NOT NULL DEFAULT ''
 			)`,
 		},
+		{ // 11 -> 12: auth is one of none/HMAC/token — mixed hooks keep the HMAC
+			`UPDATE hooks SET trigger_token = '' WHERE hmac_secret != '' AND trigger_token != ''`,
+		},
 	}
 
 	for v := version; v < target; v++ {
 		for i, m := range migrations[v] {
 			if _, err := DB.Exec(m); err != nil {
 				return fmt.Errorf("migration to v%d, step %d: %w", v+1, i, err)
+			}
+		}
+		// v11 -> v12 drops the trigger token of mixed-auth hooks; those
+		// clients lose access, so the loss is visible in the startup log.
+		if v == 11 {
+			if n := mixedAuthHooks(); n > 0 {
+				log.Printf("migration to v12: cleared trigger_token on %d mixed-auth hook(s), HMAC auth kept", n)
 			}
 		}
 	}
@@ -134,4 +147,16 @@ func migrateTo(target int) error {
 	}
 
 	return nil
+}
+
+// mixedAuthHooks counts hooks that carry both an HMAC secret and a trigger
+// token — called right after that state was made unreachable.
+func mixedAuthHooks() int {
+	var n int
+	if err := DB.QueryRow(
+		"SELECT COUNT(*) FROM hooks WHERE hmac_secret != '' AND trigger_token != ''",
+	).Scan(&n); err != nil {
+		return 0
+	}
+	return n
 }
