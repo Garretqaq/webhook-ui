@@ -8,11 +8,11 @@ type Execution struct {
 	TriggerSource string     `json:"trigger_source"`
 	ExecTarget    string     `json:"exec_target"`
 	Status        string     `json:"status"`
-	// Output can be megabytes (LOG_TAIL_BYTES caps it at 5MB per stream), so
-	// list responses leave it out — the omitempty json tag only skips an empty
-	// string, hence the pointer. Get (detail) fills it in.
+	// Output and Error can each be megabytes (LOG_TAIL_BYTES caps them at 5MB
+	// per stream), so list responses leave them out — the omitempty json tag
+	// only skips an empty string, hence the pointers. Get (detail) fills them.
 	Output        *string    `json:"output,omitempty"`
-	Error         string     `json:"error"`
+	Error         *string    `json:"error,omitempty"`
 	StartedAt     time.Time  `json:"started_at"`
 	FinishedAt    *time.Time `json:"finished_at,omitempty"`
 }

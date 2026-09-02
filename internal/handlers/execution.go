@@ -24,10 +24,11 @@ func (h *ExecutionHandler) List(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	hookID := c.Query("hook_id")
 
-	// output is deliberately not selected: it can be megabytes per row, the
-	// list never renders it, and the detail endpoint serves it on demand.
+	// output and error are deliberately not selected: both can be megabytes
+	// per row, the list never renders them, and the detail endpoint serves
+	// them on demand.
 	query := `
-		SELECT id, hook_id, trigger_source, exec_target, status, error, started_at, finished_at
+		SELECT id, hook_id, trigger_source, exec_target, status, started_at, finished_at
 		FROM executions
 	`
 	args := []interface{}{}
@@ -53,7 +54,7 @@ func (h *ExecutionHandler) List(c *gin.Context) {
 		var finishedAt sql.NullTime
 		err := rows.Scan(
 			&exec.ID, &exec.HookID, &exec.TriggerSource, &exec.ExecTarget, &exec.Status,
-			&exec.Error, &exec.StartedAt, &finishedAt,
+			&exec.StartedAt, &finishedAt,
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -145,16 +146,15 @@ func (h *ExecutionHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 	var exec models.Execution
 	var finishedAt sql.NullTime
-	var output string
+	var output, errMsg string
 
 	err := database.DB.QueryRow(`
 		SELECT id, hook_id, trigger_source, exec_target, status, output, error, started_at, finished_at
 		FROM executions WHERE id = ?
 	`, id).Scan(
 		&exec.ID, &exec.HookID, &exec.TriggerSource, &exec.ExecTarget, &exec.Status,
-		&output, &exec.Error, &exec.StartedAt, &finishedAt,
+		&output, &errMsg, &exec.StartedAt, &finishedAt,
 	)
-	exec.Output = &output
 
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "execution not found"})
@@ -164,6 +164,9 @@ func (h *ExecutionHandler) Get(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	exec.Output = &output
+	exec.Error = &errMsg
 
 	if finishedAt.Valid {
 		exec.FinishedAt = &finishedAt.Time

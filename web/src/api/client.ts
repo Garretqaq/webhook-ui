@@ -41,7 +41,8 @@ export interface Execution {
   status: string
   /** Detail endpoint only — the list omits it, it can be megabytes. */
   output?: string
-  error: string
+  /** Detail endpoint only — the list omits it, it can be megabytes. */
+  error?: string
   started_at: string
   finished_at?: string
 }

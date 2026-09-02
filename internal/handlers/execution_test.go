@@ -11,14 +11,15 @@ import (
 	"github.com/songguangzhi/webhook-ui/internal/database"
 )
 
-// The list is the hot path a browser hits on every page view, and output can be
-// megabytes per row (LOG_TAIL_BYTES caps it at 5MB per stream), so the list
-// must not carry it; the detail endpoint is where output belongs.
-func TestListOmitsOutputWhileDetailServesIt(t *testing.T) {
+// The list is the hot path a browser hits on every page view, and output and
+// error can each be megabytes per row (LOG_TAIL_BYTES caps them at 5MB per
+// stream), so the list must not carry them; the detail endpoint is where they
+// belong.
+func TestListOmitsOutputAndErrorWhileDetailServesThem(t *testing.T) {
 	setupExecDB(t)
 	execID := startedExecution(t)
 	if _, err := database.DB.Exec(
-		`UPDATE executions SET output = 'hello output' WHERE id = ?`, execID,
+		`UPDATE executions SET output = 'hello output', error = 'boom' WHERE id = ?`, execID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -42,8 +43,10 @@ func TestListOmitsOutputWhileDetailServesIt(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("list has %d rows, want 1", len(list))
 	}
-	if _, ok := list[0]["output"]; ok {
-		t.Error("list entry has output field, want it omitted")
+	for _, field := range []string{"output", "error"} {
+		if _, ok := list[0][field]; ok {
+			t.Errorf("list entry has %s field, want it omitted", field)
+		}
 	}
 
 	w = httptest.NewRecorder()
@@ -58,5 +61,8 @@ func TestListOmitsOutputWhileDetailServesIt(t *testing.T) {
 	}
 	if detail["output"] != "hello output" {
 		t.Errorf("get output = %v, want %q", detail["output"], "hello output")
+	}
+	if detail["error"] != "boom" {
+		t.Errorf("get error = %v, want %q", detail["error"], "boom")
 	}
 }
