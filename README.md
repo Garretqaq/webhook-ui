@@ -207,52 +207,211 @@ webhook-ui/
 
 ## 📡 API
 
+### 通用约定
+
+- 所有响应均为 JSON，时间戳为 RFC3339；错误统一为 `{"error": "原因"}`（个别接口附额外字段，见下文）。
+- 三类入口，各自认证：
+
+| 入口 | 认证 | 用途 |
+|------|------|------|
+| `/hooks/:id` | Hook 上配置的 Token / HMAC | Webhook 触发，无需登录 |
+| `/api/*`（`auth/login`、`auth/check` 除外） | 登录后的 Session Cookie | 管理 API |
+| `/api/external/*` | `X-API-Token` 请求头 | 外部只读 API |
+
 ### Webhook 触发
 
-```
-POST /hooks/:id          # 也支持 GET（见 0.2.0+）
-```
+#### `POST /hooks/:id`（也支持 GET）
 
-**响应契约**：同步 Hook 返回 `200`，body 带完整 `output`；异步 Hook（Hook 上勾选「异步执行」）返回 `202`，body 带 `execution_id` 与 `status: queued`，随后凭 id 轮询日志。同一异步 Hook 上次未结束时再次触发返回 `409`（body 带 `running_execution_id`）；并发与队列均满返回 `429`。
+- **认证**（按 Hook 配置，Token / HMAC 可单用或同用）：
+  - 固定 Token：`X-Token` 请求头或 `?token=` 查询参数，值相等才执行
+  - HMAC 签名：`X-Signature`（通用）/ `X-Hub-Signature-256`（GitHub）/ `X-Gitlab-Token`（GitLab），算法 `sha1`/`sha256`/`sha512`，hex 编码
+- **请求 Body**：任意。Payload 按注入规则传给脚本/命令（见「传参给脚本/命令」）
+- **响应**：
 
-访问校验二选一或同用：
+| 状态码 | 场景 | Body |
+|--------|------|------|
+| `200` | 同步执行成功 | `{"message", "output"}` |
+| `202` | 异步执行已受理 | `{"message", "execution_id", "status": "queued"}` |
+| `401` | Token / HMAC 校验失败 | `{"error"}` |
+| `404` | Hook 不存在 | `{"error"}` |
+| `409` | 同一异步 Hook 上次执行未结束 | `{"error", "running_execution_id"}` |
+| `429` | 异步并发与队列均满 | `{"error"}` |
+| `500` | 同步执行失败 | `{"error", "output"}` |
 
-- **固定 Token**：配置 Token 后，请求带 `X-Token` header 或 `?token=`，值相等才执行。适合不能算 HMAC 的调用方。
-- **HMAC 签名**：
-  - GitHub：`X-Hub-Signature-256`
-  - GitLab：`X-Gitlab-Token`
-  - 通用：`X-Signature`
+异步 Hook 凭 `execution_id` 轮询日志，见下方「执行记录」。
 
 ### 管理 API（需登录）
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/api/auth/login` · `/api/auth/logout` | 登录 / 登出 |
-| `GET/POST` | `/api/hooks` | Hook 列表 / 创建 |
-| `GET/PUT/DELETE` | `/api/hooks/:id` | 详情 / 更新 / 删除 |
-| `GET` | `/api/executions` · `/api/executions/:id` · `/api/executions/:id/logs` | 执行记录 / 详情 / 增量日志 |
-| `POST` | `/api/executions/:id/cancel` | 中断正在运行的异步执行 |
-| `GET/POST` | `/api/settings/api-token` · `/api/settings/api-token/regenerate` | 查看 / 重新生成 API token |
-| `GET/POST/PUT/DELETE` | `/api/scripts` | 脚本管理 |
-| `POST` | `/api/script-test-runs` | 发起脚本试运行，`202` 返回 `run_id` |
-| `GET` | `/api/script-test-runs/:id/logs` | 试运行的增量日志，`?after_seq=N` 游标轮询 |
-| `POST` | `/api/script-test-runs/:id/cancel` | 中断正在跑的试运行 |
-| `GET/POST/PUT/DELETE` | `/api/ssh-hosts` | SSH 主机管理 |
-| `POST` | `/api/ssh-hosts/test` | 测试连接 |
+> 未登录返回 `401`。以下各表只列成功响应与该接口特有的状态码；参数校验失败一律 `400`，资源不存在一律 `404`，服务器内部错误一律 `500`，Body 均为 `{"error": "..."}`。
 
-**脚本试运行**：验证正在编辑的脚本，不是正式执行。发起后立即返回 `run_id`，日志边跑边用同一套游标语义轮询，运行中可中断。试运行只存在服务内存里——不写执行记录、不进「执行日志」、重启即丢，日志按 `LOG_TAIL_BYTES` 保留尾部，超时固定 5 分钟，最多 3 个并发（超出返回 `429`，不排队）。跑更久的任务请配成异步 Hook。
+#### 会话
+
+| 接口 | 请求 Body | 成功响应 |
+|------|-----------|----------|
+| `POST /api/auth/login` | `{"username", "password"}` | `200 {"message": "logged in"}`，Set-Cookie 建立会话 |
+| `GET /api/auth/check` | — | `200 {"authenticated": true/false}` |
+| `POST /api/auth/logout` | — | `200 {"message": "logged out"}` |
+
+登录失败返回 `401`；账号锁定与每 IP 限速超限均返回 `429`（锁定响应附 `retry_after` 秒数）。
+
+#### Hook 管理
+
+**Hook 对象**：
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 标识；创建时缺省自动生成 8 位 |
+| `name` | 名称，必填 |
+| `command` | 自由命令，与 `script_id` 二选一 |
+| `script_id` | 绑定脚本 ID，与 `command` 二选一 |
+| `ssh_host_id` | 执行位置：空 = 本地，否则为 SSH 主机 ID |
+| `working_dir` | 工作目录，不存在则执行失败 |
+| `response_message` | 成功响应中 `message` 的内容 |
+| `trigger_token` | 固定 Token；列表响应不返回，代之以 `trigger_token_enabled` |
+| `hmac_secret` | HMAC 密钥；列表响应不返回，代之以 `hmac_enabled` |
+| `hmac_algorithm` | `sha1` / `sha256` / `sha512`，缺省 `sha256` |
+| `pass_arguments` | Payload 字段名数组，按序映射为 `$1` `$2` ... 位置参数 |
+| `pass_headers` | 请求头名数组，注入为 `HEADER_<NAME>` 环境变量 |
+| `pass_payload_to` | 原始 Payload 注入方式：空 / `args` / `env` / `both` |
+| `async` | 是否异步执行 |
+| `timeout_seconds` | 单次执行超时秒数；`0` = 不限（仅异步 Hook 可用），同步缺省 300 |
+| `created_at` / `updated_at` | 只读时间戳 |
+
+| 接口 | 请求 Body | 成功响应 |
+|------|-----------|----------|
+| `GET /api/hooks` | — | `200` Hook 列表（附加 `hmac_enabled`、`trigger_token_enabled`、`script_name`、`ssh_host_name`） |
+| `POST /api/hooks` | Hook 对象 | `201` 完整 Hook |
+| `GET /api/hooks/:id` | — | `200` 完整 Hook（含 `trigger_token`、`hmac_secret`） |
+| `PUT /api/hooks/:id` | Hook 对象 | `200` 更新后的完整 Hook |
+| `DELETE /api/hooks/:id` | — | `200 {"message": "deleted"}` |
+
+校验规则：`command` 与 `script_id` 二选一必填；同步 Hook 不允许 `timeout_seconds` 为 `0`。
+
+#### 执行记录
+
+**Execution 对象**：
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 执行 ID（整数） |
+| `hook_id` | 触发的 Hook |
+| `trigger_source` | 调用方 IP |
+| `exec_target` | `local`，或 SSH 主机的 `user@host:port` |
+| `status` | `queued` / `running` / `success` / `failed` / `timeout` / `canceled` / `interrupted`（服务重启遗留） |
+| `output` / `error` | 执行输出与错误；仅详情接口返回（列表省略），按 `LOG_TAIL_BYTES` 截尾 |
+| `started_at` / `finished_at` | 起止时间 |
+
+| 接口 | 请求 | 成功响应 |
+|------|------|----------|
+| `GET /api/executions` | query：`limit`（默认 50）、`offset`、`hook_id` | `200` Execution 列表（不含 `output` / `error`） |
+| `GET /api/executions/:id` | — | `200` 完整 Execution |
+| `GET /api/executions/:id/logs` | query：`after_seq`（游标，默认 0） | `200` 分页日志（见下） |
+| `POST /api/executions/:id/cancel` | — | `202 {"message": "cancellation requested"}` |
+
+仅异步执行可中断；取消非运行中的执行返回 `409`（附当前 `status`）。
+
+**分页日志响应**（执行日志与脚本试运行日志结构相同）：
+
+```json
+{
+  "chunks": [{ "seq": 1, "stream": "stdout", "text": "..." }],
+  "next_seq": 42,
+  "oldest_seq": 3,
+  "has_more": false,
+  "status": "success",
+  "finished": true
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `chunks` | 本页日志块，`stream` 为 `stdout` / `stderr`；单页最多 500 块 |
+| `next_seq` | 下次轮询的 `after_seq` 起点 |
+| `oldest_seq` | 仍在的最老序号；游标比它小 = 中间有一段已被滚动删除 |
+| `has_more` | 是否还有积压未读 |
+| `status` / `finished` | 执行当前状态 / 是否结束 |
+
+#### 脚本管理
+
+**Script 对象**：
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 标识；创建时缺省自动生成 8 位 |
+| `name` | 名称，必填 |
+| `interpreter` | `bash` / `sh` / `python3` / `powershell`，必填 |
+| `content` | 脚本内容，必填；列表响应不返回 |
+| `description` | 描述 |
+| `created_at` / `updated_at` | 只读时间戳 |
+
+| 接口 | 请求 Body | 成功响应 |
+|------|-----------|----------|
+| `GET /api/scripts` | — | `200` 列表（不含 `content`） |
+| `POST /api/scripts` | Script 对象 | `201` 完整 Script |
+| `GET /api/scripts/:id` | — | `200` 完整 Script |
+| `PUT /api/scripts/:id` | Script 对象 | `200` 更新后的 Script |
+| `DELETE /api/scripts/:id` | — | `200 {"message": "deleted"}` |
+
+删除被 Hook 引用的脚本返回 `409`（错误信息列出引用它的 Hook）。
+
+#### 脚本试运行
+
+验证正在编辑的脚本，不是正式执行：只存内存，不写执行记录、不进「执行日志」，重启即丢；超时固定 5 分钟，并发上限 3 且不排队——满员时先停掉最老的进行中运行腾位置，仍失败才返回 `429`。跑更久的任务请配成异步 Hook。
+
+| 接口 | 请求 Body | 成功响应 |
+|------|-----------|----------|
+| `POST /api/script-test-runs` | `{"interpreter", "content", "args": [], "ssh_host_id": ""}` | `202 {"run_id", "status": "running"}` |
+| `GET /api/script-test-runs/:id/logs` | query：`after_seq` | `200` 分页日志（结构见「执行记录」） |
+| `POST /api/script-test-runs/:id/cancel` | — | `202 {"message": "cancellation requested"}` |
+
+运行不存在（已过期或服务重启过）返回 `404`；取消非运行中的返回 `409`。
+
+#### SSH 主机
+
+**SSHHost 对象**：
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 标识；服务端自动生成 |
+| `name` / `host` / `user` | 必填 |
+| `port` | 缺省 22 |
+| `auth_type` | `key` / `password`，必填 |
+| `target_os` | `linux` / `windows`，缺省 `linux` |
+| `credential` | 私钥或密码，必填；列表响应不返回 |
+| `host_key` | 预填的公钥（防中间人）；留空则首次连接按 TOFU 记录 |
+| `created_at` / `updated_at` | 只读时间戳 |
+
+| 接口 | 请求 Body | 成功响应 |
+|------|-----------|----------|
+| `GET /api/ssh-hosts` | — | `200` 列表（不含 `credential`） |
+| `POST /api/ssh-hosts` | SSHHost 对象 | `201` 完整 SSHHost |
+| `GET /api/ssh-hosts/:id` | — | `200` 完整 SSHHost |
+| `PUT /api/ssh-hosts/:id` | SSHHost 对象 | `200` 更新后的 SSHHost |
+| `DELETE /api/ssh-hosts/:id` | — | `200 {"message": "deleted"}` |
+| `POST /api/ssh-hosts/test` | SSHHost 对象 | `200 {"success": true, "learned_host_key"}` |
+
+测试连接失败同样返回 `200`，但 `success: false` 且带 `error`；测试已保存的主机时，学到的公钥会写回（TOFU）。删除被 Hook 引用的主机返回 `409`。
+
+#### 设置
+
+| 接口 | 请求 Body | 成功响应 |
+|------|-----------|----------|
+| `GET /api/settings/api-token` | — | `200 {"configured", "token"}`（未生成时 `configured: false`） |
+| `POST /api/settings/api-token/regenerate` | — | `200 {"configured": true, "token"}` |
+
+重新生成后，旧 token 立即对全部外部调用方失效。
 
 ### 外部只读 API（凭 API token）
 
-在「设置」页生成 token 后，外部系统（CI、监控等）凭 `X-API-Token` 请求头访问，**无需登录**，作用域仅限只读执行记录与日志：
+「设置」页生成 token 后，外部系统（CI、监控等）凭 `X-API-Token` 请求头访问，**无需登录**，作用域仅限只读执行记录与日志：
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/external/executions` | 执行记录列表（支持 `limit`/`offset`/`hook_id`） |
-| `GET` | `/api/external/executions/:id` | 单条详情 |
-| `GET` | `/api/external/executions/:id/logs` | 增量日志，`?after_seq=N` 游标轮询 |
+| 接口 | 请求 | 成功响应 |
+|------|------|----------|
+| `GET /api/external/executions` | query：`limit`（默认 50）、`offset`、`hook_id` | `200` Execution 列表 |
+| `GET /api/external/executions/:id` | — | `200` 完整 Execution |
+| `GET /api/external/executions/:id/logs` | query：`after_seq` | `200` 分页日志（结构见「执行记录」） |
 
-响应带 `next_seq`（下次起点）、`oldest_seq`（仍在的最老序号——你的游标比它小说明中间丢过一段）、`has_more`（还有积压）、`status`/`finished`。token 打不开 `/api/...` 的会话端点，也碰不到 hooks/scripts/ssh-hosts 及任何写操作与中断。
+与登录版同名接口行为一致。token 不符返回 `401`；未生成 token 返回 `403`。token 打不开 `/api/...` 的会话端点，也碰不到 hooks/scripts/ssh-hosts 及任何写操作与中断。
 
 ## 🛠️ 开发
 
