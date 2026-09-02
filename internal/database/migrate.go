@@ -133,7 +133,11 @@ func migrateTo(target int) error {
 		// Counted before the step runs — after it, the UPDATE has already
 		// cleared the very state being counted.
 		if v == 11 {
-			if n := mixedAuthHooks(); n > 0 {
+			n, err := mixedAuthHooks()
+			if err != nil {
+				return fmt.Errorf("count mixed-auth hooks: %w", err)
+			}
+			if n > 0 {
 				log.Printf("migration to v12: clearing trigger_token on %d mixed-auth hook(s), HMAC auth kept", n)
 			}
 		}
@@ -153,12 +157,10 @@ func migrateTo(target int) error {
 
 // mixedAuthHooks counts hooks that carry both an HMAC secret and a trigger
 // token — called just before that state is migrated away.
-func mixedAuthHooks() int {
+func mixedAuthHooks() (int, error) {
 	var n int
-	if err := DB.QueryRow(
+	err := DB.QueryRow(
 		"SELECT COUNT(*) FROM hooks WHERE hmac_secret != '' AND trigger_token != ''",
-	).Scan(&n); err != nil {
-		return 0
-	}
-	return n
+	).Scan(&n)
+	return n, err
 }
