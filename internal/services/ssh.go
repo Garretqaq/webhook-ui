@@ -127,7 +127,7 @@ func ExecuteScriptSSH(client *ssh.Client, targetOS, interpreter, content string,
 		return &ExecuteResult{Success: false, Error: fmt.Sprintf("interpreter %q cannot run on a %s target", interpreter, targetOS)}
 	}
 	if targetOS == models.TargetOSWindows {
-		stdin := strings.NewReader(powershellPreamble(args, env, workDir) + content)
+		stdin := strings.NewReader(powershellPreamble(args, env, workDir) + content + powershellEpilogue)
 		return runSSHSession(client, windowsScriptCommand, stdin, opts)
 	}
 	return runSSHSession(client, sshScriptCommand(interpreter, args, env, workDir), strings.NewReader(content), opts)
@@ -323,6 +323,16 @@ func powershellPreamble(args []string, env map[string]string, workDir string) st
 	b.WriteString(")\n")
 	return b.String()
 }
+
+// powershellEpilogue is the statement appended after the piped script.
+// `-Command -` executes stdin one statement at a time and leaves the process
+// exit code to PowerShell's internal session state, which reports non-zero
+// after harmless things like a native command's stderr crossing a 2>&1
+// redirect. An explicit exit makes the code deterministic: a script that
+// fell through takes the last native command's exit code (0 when it never
+// ran one — exit $null converts to 0), and a script with its own exit
+// statement never reaches this line at all.
+const powershellEpilogue = "\nexit $LASTEXITCODE\n"
 
 // psEscape renders s as a PowerShell single-quoted string. The quote is the
 // only metacharacter inside one — no $ or backtick expansion happens — so

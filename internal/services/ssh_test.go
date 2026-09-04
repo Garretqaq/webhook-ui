@@ -367,6 +367,32 @@ func TestExecuteScriptSSHWindowsPipesPreambleAndContent(t *testing.T) {
 	}
 }
 
+// -Command - leaves the process exit code to PowerShell's session state,
+// which reports non-zero after harmless things like a native command's
+// stderr crossing a 2>&1 redirect. The piped stdin must end with an explicit
+// exit so the code a run is judged by is the last native command's.
+func TestExecuteScriptSSHWindowsAppendsExitEpilogue(t *testing.T) {
+	addr, _ := startTestServer(t)
+	h := testHost(addr)
+
+	result, err := DialSSH(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Client.Close()
+
+	// Content without a trailing newline: the epilogue has to carry its own
+	// leading one or it would glue onto the last statement.
+	execResult := ExecuteScriptSSH(result.Client, models.TargetOSWindows, "powershell",
+		"Write-Output done", nil, nil, "", ExecOptions{})
+	if !execResult.Success {
+		t.Fatalf("expected success, got: %s", execResult.Error)
+	}
+	if !strings.HasSuffix(execResult.Output, "Write-Output done\nexit $LASTEXITCODE\n") {
+		t.Errorf("piped stdin must end with the exit epilogue, got: %q", execResult.Output)
+	}
+}
+
 func TestExecuteScriptSSHRejectsInterpreterForWrongOS(t *testing.T) {
 	cases := []struct{ targetOS, interpreter string }{
 		{models.TargetOSWindows, "bash"},
