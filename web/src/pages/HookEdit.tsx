@@ -242,8 +242,8 @@ export default function HookEdit() {
           <Form.Item name="success_body" label="后续请求体（JSON）" rules={[
             { required: true, message: '请输入固定 JSON 请求体' },
             { validator: (_, value) => { try { JSON.parse(value); return Promise.resolve() } catch { return Promise.reject(new Error('请输入有效 JSON')) } } },
-          ]} extra="按目标 Hook 的参数传递规则处理；不会透传主请求的请求头或查询参数。">
-            <TextArea rows={5} placeholder={'{"command":"hibernate","desktop_id":"你的桌面 ID"}'} />
+          ]} extra="触发后续 Hook 时作为其请求体发送的固定 JSON，按目标 Hook 的参数传递规则解析；不透传主请求的请求头、查询参数或原始请求体。">
+            <TextArea rows={5} placeholder={'{\n  "key": "value"\n}'} />
           </Form.Item>
         )}
 
