@@ -31,8 +31,8 @@ export default function HookList() {
       await hookApi.delete(id)
       message.success('删除成功')
       loadHooks()
-    } catch (error) {
-      message.error('删除失败')
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '删除失败')
     }
   }
 
@@ -80,6 +80,13 @@ export default function HookList() {
         record.ssh_host_id
           ? <Tag color="purple">SSH: {record.ssh_host_name || record.ssh_host_id}</Tag>
           : <Tag>本地</Tag>,
+    },
+    {
+      title: '成功后触发',
+      key: 'success_hook',
+      render: (_: unknown, record: HookListItem) => record.success_hook_id
+        ? <Button type="link" onClick={() => navigate(`/hooks/${record.success_hook_id}`)}>{hooks.find(h => h.id === record.success_hook_id)?.name || record.success_hook_id}</Button>
+        : '-',
     },
     {
       title: 'HMAC',

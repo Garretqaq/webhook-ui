@@ -275,9 +275,9 @@ func (h *WebhookHandler) launchHook(hook *models.Hook, execID int64, env map[str
 
 	cancel := h.cancels.Register(execID)
 
-	h.runner.wg.Add(1) // Keep WaitIdle tracking the handoff after admission is released.
+	handoffDone := h.runner.TrackHandoff()
 	go func() {
-		defer h.runner.wg.Done()
+		defer handoffDone()
 		func() {
 			defer slot.Release()
 			defer h.cancels.Unregister(execID)

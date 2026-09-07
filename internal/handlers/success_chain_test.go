@@ -452,3 +452,63 @@ func TestSuccessHookRestartKeepsExistingChildAssociation(t *testing.T) {
 		t.Fatalf("restart association: %+v %+v", parent, child)
 	}
 }
+
+func TestSuccessHookStatePollingOmitsLogsAndPayload(t *testing.T) {
+	r, h := chainRouter(t)
+	asyncHook(t, "parent", "echo large-log", 5)
+	asyncHook(t, "child", "true", 5)
+	chainConfigure(t, r, "parent", "child", `{"large":"payload"}`)
+	_, body := triggerHook(t, h, "parent")
+	id := int64(body["execution_id"].(float64))
+	h.runner.WaitIdle()
+	w := hookRequest(t, r, "GET", fmt.Sprintf("/api/executions/%d?include_output=false", id), "")
+	var state map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"output", "error", "success_body"} {
+		if _, ok := state[key]; ok {
+			t.Fatalf("lightweight state includes %s", key)
+		}
+	}
+	if state["success_status"] != "dispatched" {
+		t.Fatal(state)
+	}
+}
+
+func TestSuccessHookRetentionKeepsAncestorsOfRecentAttempts(t *testing.T) {
+	r, _ := chainRouter(t)
+	old := time.Now().AddDate(0, 0, -60)
+	for _, row := range []struct {
+		id, parent int
+		status     string
+		started    time.Time
+	}{
+		{1, 0, "success", old}, {2, 1, "success", old}, {3, 2, "running", time.Now()},
+	} {
+		_, err := database.DB.Exec(`INSERT INTO executions (id,hook_id,status,started_at,finished_at,parent_execution_id,success_status,success_body) VALUES (?,'chain',?,?,CASE WHEN ?='running' THEN NULL ELSE CURRENT_TIMESTAMP END,?,'dispatched','{"keep":true}')`, row.id, row.status, row.started, row.status, row.parent)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	cutoff := time.Now().AddDate(0, 0, -30)
+	if _, err := CleanupOldExecutions(cutoff); err != nil {
+		t.Fatal(err)
+	}
+	if chainDetail(t, r, 1)["success_body"] != `{"keep":true}` {
+		t.Fatal("lost original payload")
+	}
+	if _, err := database.DB.Exec("UPDATE executions SET status='failed',finished_at=CURRENT_TIMESTAMP WHERE id=3"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CleanupOldExecutions(cutoff); err != nil {
+		t.Fatal(err)
+	}
+	chainDetail(t, r, 2) // A recent failed retry must retain its source and payload too.
+	if _, err := database.DB.Exec("UPDATE executions SET started_at=?", old); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := CleanupOldExecutions(cutoff); err != nil || n != 3 {
+		t.Fatalf("expired chain was not cleaned: %d %v", n, err)
+	}
+}

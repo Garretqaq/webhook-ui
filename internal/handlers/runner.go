@@ -126,3 +126,10 @@ type HookBusyError struct {
 func (e *HookBusyError) Error() string { return ErrHookAlreadyRunning.Error() }
 
 func (e *HookBusyError) Is(target error) bool { return target == ErrHookAlreadyRunning }
+
+// TrackHandoff keeps WaitIdle waiting while an execution releases its admission
+// and schedules a successor. Call while the current admission is still held.
+func (r *Runner) TrackHandoff() func() {
+	r.wg.Add(1)
+	return r.wg.Done
+}

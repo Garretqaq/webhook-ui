@@ -466,10 +466,12 @@ Windows 脚本删除休眠请求，npm 结束后保存 `$LASTEXITCODE` 并 `exit
 - 交接状态为等待调度（`pending`）、已创建后续执行（`dispatched`）、调度失败（`failed`）或交接中断（`interrupted`）。已创建不表示后续脚本已成功，应查看该执行自身状态。
 - 不自动重试或重启补发。重启会将未交接的记录标为中断，已创建的执行保留关联并按既有规则标记中断。远端进程可能仍在运行，可结合目标实际状态决定是否手动重跑。
 - 调度或后续执行失败后，在主执行详情点击「仅重跑后续 Hook」。使用原交接目标及原始 JSON，复用目标当前配置，创建新的关联记录，上游任务不会重跑。正常执行和重跑成功后都继续成功链。
-- 历史记录仍遵守保留周期；等待交接的记录暂不清理。历史已清理时关联链接可能不可用，无法确认后续状态时不提供盲目重跑。
+- 历史记录仍遵守保留周期；等待交接的记录，以及仍有活动或保留期内后代的祖先记录暂不清理。历史已清理时关联链接可能不可用，无法确认后续状态时不提供盲目重跑。
 
 Hook API 新增 `success_hook_id`（默认空）和 `success_body`（JSON 文本字符串）。选择后续 Hook 时必须提供有效 JSON；配置接口会校验目标存在及无循环。
 
 执行详情新增 `parent_execution_id`、`success_hook_id`、`success_body`、`success_status`、`success_error`、`success_execution_id`、`success_attempt` 和 `success_executions`。`success_execution_id` 指向最近一次已创建的后续执行，`success_executions` 保留各次实际执行；新的调度尝试失败时，最近一次已创建的执行仍可能指向上次尝试，判断当前交接应同时查看 `success_status`。
 
 登录会话可调用 `POST /api/executions/:id/retry-successor`，请求体为 `{"attempt": 当前详情中的success_attempt}`。每次尝试递增序号，旧序号或并发重复请求返回 409，避免重复启动。成功返回 202 及新 `execution_id`。只读外部 Token 不具备重跑权限。
+
+执行详情支持 `?include_output=false`，仅查询状态和执行关联，不读取或返回完整日志及原始请求体。页面只在任务或交接仍活动时轮询此轻量视图。

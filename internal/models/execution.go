@@ -3,14 +3,14 @@ package models
 import "time"
 
 type Execution struct {
-	ParentExecutionID  int64       `json:"parent_execution_id"`
-	SuccessHookID      string      `json:"success_hook_id"`
-	SuccessBody        string      `json:"success_body,omitempty"`
-	SuccessStatus      string      `json:"success_status"`
-	SuccessError       string      `json:"success_error"`
-	SuccessExecutionID int64       `json:"success_execution_id"`
-	SuccessAttempt     int         `json:"success_attempt"`
-	SuccessExecutions  []Execution `json:"success_executions,omitempty"`
+	ParentExecutionID  int64           `json:"parent_execution_id"`
+	SuccessHookID      string          `json:"success_hook_id"`
+	SuccessBody        string          `json:"success_body,omitempty"`
+	SuccessStatus      string          `json:"success_status"`
+	SuccessError       string          `json:"success_error"`
+	SuccessExecutionID int64           `json:"success_execution_id"`
+	SuccessAttempt     int             `json:"success_attempt"`
+	SuccessExecutions  []ExecutionLink `json:"success_executions,omitempty"`
 
 	ID            int64  `json:"id"`
 	HookID        string `json:"hook_id"`
@@ -24,6 +24,14 @@ type Execution struct {
 	Error      *string    `json:"error,omitempty"`
 	StartedAt  time.Time  `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+// ExecutionLink is a summary of an actual successor attempt, not a partial
+// execution with fabricated zero timestamps and empty output.
+type ExecutionLink struct {
+	ID     int64  `json:"id"`
+	HookID string `json:"hook_id"`
+	Status string `json:"status"`
 }
 
 // ExecutionLogChunk is one slice of a running execution's output, in the order

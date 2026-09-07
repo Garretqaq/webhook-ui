@@ -52,17 +52,26 @@ export default function ExecutionLogs() {
     loadData()
   }, [selectedHook])
 
+  const needsStateRefresh = !!currentExecution && (
+    cancellable(currentExecution.status) || currentExecution.success_status === 'pending' ||
+    !!currentExecution.success_executions?.some(child => cancellable(child.status))
+  )
   useEffect(() => {
-    if (!detailVisible || !currentExecution) return
+    if (!detailVisible || !currentExecution || !needsStateRefresh) return
     const id = currentExecution.id
     let active = true
-    const timer = setInterval(() => {
-      executionApi.get(id).then(res => {
-        if (active && detailID.current === id) setCurrentExecution(res.data)
-      }).catch(() => {})
+    let fetching = false
+    const timer = setInterval(async () => {
+      if (fetching) return
+      fetching = true
+      try {
+        const res = await executionApi.state(id)
+        if (active && detailID.current === id) setCurrentExecution(previous => previous?.id === id ? { ...previous, ...res.data } : previous)
+      } catch { /* A transient state poll failure is retried while work is active. */ }
+      finally { fetching = false }
     }, 2000)
     return () => { active = false; clearInterval(timer) }
-  }, [detailVisible, currentExecution?.id])
+  }, [detailVisible, currentExecution?.id, needsStateRefresh])
 
   const getHookName = (hookId: string) => {
     const hook = hooks.find(h => h.id === hookId)

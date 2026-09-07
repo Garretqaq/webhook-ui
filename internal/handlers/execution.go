@@ -148,10 +148,15 @@ func (h *ExecutionHandler) Get(c *gin.Context) {
 	var finishedAt sql.NullTime
 	var output, errMsg string
 
+	includeOutput := c.DefaultQuery("include_output", "true") != "false"
+	outputColumns, bodyColumn := "output, error", "success_body"
+	if !includeOutput {
+		outputColumns, bodyColumn = "'', ''", "''"
+	}
+	// Projection is selected here, not filtered after loading MB-sized log tails.
 	err := database.DB.QueryRow(`
-		SELECT id, hook_id, trigger_source, exec_target, status, output, error, started_at, finished_at, parent_execution_id, success_hook_id, success_status, success_error, success_execution_id, success_attempt, success_body
-		FROM executions WHERE id = ?
-	`, id).Scan(
+ SELECT id, hook_id, trigger_source, exec_target, status, `+outputColumns+`, started_at, finished_at, parent_execution_id, success_hook_id, success_status, success_error, success_execution_id, success_attempt, `+bodyColumn+`
+ FROM executions WHERE id = ?`, id).Scan(
 		&exec.ID, &exec.HookID, &exec.TriggerSource, &exec.ExecTarget, &exec.Status,
 		&output, &errMsg, &exec.StartedAt, &finishedAt, &exec.ParentExecutionID, &exec.SuccessHookID, &exec.SuccessStatus, &exec.SuccessError, &exec.SuccessExecutionID, &exec.SuccessAttempt, &exec.SuccessBody,
 	)
@@ -165,8 +170,10 @@ func (h *ExecutionHandler) Get(c *gin.Context) {
 		return
 	}
 
-	exec.Output = &output
-	exec.Error = &errMsg
+	if includeOutput {
+		exec.Output = &output
+		exec.Error = &errMsg
+	}
 
 	if finishedAt.Valid {
 		exec.FinishedAt = &finishedAt.Time
@@ -179,7 +186,7 @@ func (h *ExecutionHandler) Get(c *gin.Context) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var child models.Execution
+		var child models.ExecutionLink
 		if err := rows.Scan(&child.ID, &child.HookID, &child.Status); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -285,16 +292,18 @@ func CleanupOldExecutions(cutoff time.Time) (int64, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`
-		DELETE FROM execution_logs WHERE execution_id IN (
-			SELECT id FROM executions WHERE finished_at IS NOT NULL AND started_at < ? AND success_status != 'pending'
-		)
-	`, cutoff); err != nil {
+	// Keep the ancestors of any retained execution so a recent retry still has
+	// its source and original payload. UNION also bounds malformed cyclic data.
+	const retained = `WITH RECURSIVE retained(id) AS (
+ SELECT id FROM executions WHERE finished_at IS NULL OR started_at >= ? OR success_status='pending'
+ UNION
+ SELECT e.parent_execution_id FROM executions e JOIN retained r ON e.id=r.id WHERE e.parent_execution_id!=0
+ ) `
+	if _, err := tx.Exec(retained+`DELETE FROM execution_logs WHERE execution_id IN (
+ SELECT id FROM executions WHERE id NOT IN (SELECT id FROM retained))`, cutoff); err != nil {
 		return 0, err
 	}
-	result, err := tx.Exec(`
-		DELETE FROM executions WHERE finished_at IS NOT NULL AND started_at < ? AND success_status != 'pending'
-	`, cutoff)
+	result, err := tx.Exec(retained+`DELETE FROM executions WHERE id NOT IN (SELECT id FROM retained)`, cutoff)
 	if err != nil {
 		return 0, err
 	}

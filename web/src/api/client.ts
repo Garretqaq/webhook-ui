@@ -127,6 +127,7 @@ export const executionApi = {
   list: (params?: { limit?: number; offset?: number; hook_id?: string }) =>
     client.get<Execution[]>('/executions', { params }),
   get: (id: number) => client.get<Execution>(`/executions/${id}`),
+  state: (id: number) => client.get<Execution>(`/executions/${id}`, { params: { include_output: false } }),
   logs: (id: number, afterSeq: number) =>
     client.get<ExecutionLogs>(`/executions/${id}/logs`, { params: { after_seq: afterSeq } }),
   cancel: (id: number) => client.post(`/executions/${id}/cancel`),
