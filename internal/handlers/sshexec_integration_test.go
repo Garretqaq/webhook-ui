@@ -18,7 +18,7 @@ import (
 // startStagedSSHServer runs an in-process SSH server that answers every exec
 // request with output in two stages. The pause is what makes it possible to
 // assert that chunks reach the database before the session ends.
-func startStagedSSHServer(t *testing.T, pause time.Duration) string {
+func startStagedSSHServer(t *testing.T, pause time.Duration, onDisconnect ...func()) string {
 	t.Helper()
 
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -48,6 +48,10 @@ func startStagedSSHServer(t *testing.T, pause time.Duration) string {
 				return
 			}
 			go func() {
+				defer conn.Close()
+				if len(onDisconnect) > 0 {
+					defer onDisconnect[0]()
+				}
 				_, chans, reqs, err := ssh.NewServerConn(conn, config)
 				if err != nil {
 					return
@@ -69,7 +73,7 @@ func startStagedSSHServer(t *testing.T, pause time.Duration) string {
 								continue
 							}
 							req.Reply(true, nil)
-							go io.Copy(io.Discard, channel) // drain the piped script
+							io.Copy(io.Discard, channel) // read all stdin before exiting, like a real interpreter
 							channel.Write([]byte("stage-one\n"))
 							time.Sleep(pause)
 							channel.Write([]byte("stage-two\n"))

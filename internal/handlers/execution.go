@@ -28,7 +28,7 @@ func (h *ExecutionHandler) List(c *gin.Context) {
 	// per row, the list never renders them, and the detail endpoint serves
 	// them on demand.
 	query := `
-		SELECT id, hook_id, trigger_source, exec_target, status, started_at, finished_at
+		SELECT id, hook_id, trigger_source, exec_target, status, started_at, finished_at, parent_execution_id, success_hook_id, success_status, success_error, success_execution_id, success_attempt
 		FROM executions
 	`
 	args := []interface{}{}
@@ -54,7 +54,7 @@ func (h *ExecutionHandler) List(c *gin.Context) {
 		var finishedAt sql.NullTime
 		err := rows.Scan(
 			&exec.ID, &exec.HookID, &exec.TriggerSource, &exec.ExecTarget, &exec.Status,
-			&exec.StartedAt, &finishedAt,
+			&exec.StartedAt, &finishedAt, &exec.ParentExecutionID, &exec.SuccessHookID, &exec.SuccessStatus, &exec.SuccessError, &exec.SuccessExecutionID, &exec.SuccessAttempt,
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -149,11 +149,11 @@ func (h *ExecutionHandler) Get(c *gin.Context) {
 	var output, errMsg string
 
 	err := database.DB.QueryRow(`
-		SELECT id, hook_id, trigger_source, exec_target, status, output, error, started_at, finished_at
+		SELECT id, hook_id, trigger_source, exec_target, status, output, error, started_at, finished_at, parent_execution_id, success_hook_id, success_status, success_error, success_execution_id, success_attempt, success_body
 		FROM executions WHERE id = ?
 	`, id).Scan(
 		&exec.ID, &exec.HookID, &exec.TriggerSource, &exec.ExecTarget, &exec.Status,
-		&output, &errMsg, &exec.StartedAt, &finishedAt,
+		&output, &errMsg, &exec.StartedAt, &finishedAt, &exec.ParentExecutionID, &exec.SuccessHookID, &exec.SuccessStatus, &exec.SuccessError, &exec.SuccessExecutionID, &exec.SuccessAttempt, &exec.SuccessBody,
 	)
 
 	if err == sql.ErrNoRows {
@@ -172,6 +172,24 @@ func (h *ExecutionHandler) Get(c *gin.Context) {
 		exec.FinishedAt = &finishedAt.Time
 	}
 
+	rows, err := database.DB.Query("SELECT id, hook_id, status FROM executions WHERE parent_execution_id=? ORDER BY id", exec.ID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var child models.Execution
+		if err := rows.Scan(&child.ID, &child.HookID, &child.Status); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		exec.SuccessExecutions = append(exec.SuccessExecutions, child)
+	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, exec)
 }
 
@@ -181,14 +199,29 @@ func (h *ExecutionHandler) Get(c *gin.Context) {
 // in the UI forever. The status says only that this service stopped following
 // them; a detached remote process may well still be alive.
 func SweepInterruptedExecutions() (int64, error) {
-	result, err := database.DB.Exec(`
+	tx, err := database.DB.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`UPDATE executions SET success_status='interrupted',success_error='服务重启，交接已中断；未自动补发，请确认目标状态后手动重跑' WHERE success_status='pending'`); err != nil {
+		return 0, err
+	}
+	result, err := tx.Exec(`
 		UPDATE executions SET status = ?, finished_at = ?
 		WHERE status IN (?, ?)
 	`, models.StatusInterrupted, time.Now(), models.StatusRunning, models.StatusQueued)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // Cancel stops an execution that is still in flight.
@@ -247,18 +280,30 @@ func (h *ExecutionHandler) Cancel(c *gin.Context) {
 // parameter list long enough to trip SQLite's variable limit would fail
 // loudly every day while deleting nothing.
 func CleanupOldExecutions(cutoff time.Time) (int64, error) {
-	if _, err := database.DB.Exec(`
+	tx, err := database.DB.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`
 		DELETE FROM execution_logs WHERE execution_id IN (
-			SELECT id FROM executions WHERE finished_at IS NOT NULL AND started_at < ?
+			SELECT id FROM executions WHERE finished_at IS NOT NULL AND started_at < ? AND success_status != 'pending'
 		)
 	`, cutoff); err != nil {
 		return 0, err
 	}
-	result, err := database.DB.Exec(`
-		DELETE FROM executions WHERE finished_at IS NOT NULL AND started_at < ?
+	result, err := tx.Exec(`
+		DELETE FROM executions WHERE finished_at IS NOT NULL AND started_at < ? AND success_status != 'pending'
 	`, cutoff)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }

@@ -3,18 +3,27 @@ package models
 import "time"
 
 type Execution struct {
-	ID            int64      `json:"id"`
-	HookID        string     `json:"hook_id"`
-	TriggerSource string     `json:"trigger_source"`
-	ExecTarget    string     `json:"exec_target"`
-	Status        string     `json:"status"`
+	ParentExecutionID  int64       `json:"parent_execution_id"`
+	SuccessHookID      string      `json:"success_hook_id"`
+	SuccessBody        string      `json:"success_body,omitempty"`
+	SuccessStatus      string      `json:"success_status"`
+	SuccessError       string      `json:"success_error"`
+	SuccessExecutionID int64       `json:"success_execution_id"`
+	SuccessAttempt     int         `json:"success_attempt"`
+	SuccessExecutions  []Execution `json:"success_executions,omitempty"`
+
+	ID            int64  `json:"id"`
+	HookID        string `json:"hook_id"`
+	TriggerSource string `json:"trigger_source"`
+	ExecTarget    string `json:"exec_target"`
+	Status        string `json:"status"`
 	// Output and Error can each be megabytes (LOG_TAIL_BYTES caps them at 5MB
 	// per stream), so list responses leave them out — the omitempty json tag
 	// only skips an empty string, hence the pointers. Get (detail) fills them.
-	Output        *string    `json:"output,omitempty"`
-	Error         *string    `json:"error,omitempty"`
-	StartedAt     time.Time  `json:"started_at"`
-	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+	Output     *string    `json:"output,omitempty"`
+	Error      *string    `json:"error,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
 // ExecutionLogChunk is one slice of a running execution's output, in the order

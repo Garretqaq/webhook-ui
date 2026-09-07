@@ -5,7 +5,7 @@ import (
 	"log"
 )
 
-const schemaVersion = 12
+const schemaVersion = 13
 
 func Migrate() error {
 	return migrateTo(schemaVersion)
@@ -124,6 +124,19 @@ func migrateTo(target int) error {
 		},
 		{ // 11 -> 12: auth is one of none/HMAC/token — mixed hooks keep the HMAC
 			`UPDATE hooks SET trigger_token = '' WHERE hmac_secret != '' AND trigger_token != ''`,
+		},
+		{ // 12 -> 13: success chains and durable execution handoffs
+			`ALTER TABLE hooks ADD COLUMN success_hook_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE hooks ADD COLUMN success_body TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE executions ADD COLUMN parent_execution_id INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE executions ADD COLUMN chain_path TEXT NOT NULL DEFAULT '[]'`,
+			`ALTER TABLE executions ADD COLUMN success_hook_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE executions ADD COLUMN success_body TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE executions ADD COLUMN success_status TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE executions ADD COLUMN success_error TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE executions ADD COLUMN success_execution_id INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE executions ADD COLUMN success_attempt INTEGER NOT NULL DEFAULT 0`,
+			`CREATE INDEX idx_executions_parent ON executions(parent_execution_id)`,
 		},
 	}
 

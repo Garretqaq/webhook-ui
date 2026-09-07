@@ -109,6 +109,7 @@ func TestScriptTestRunsNeedASession(t *testing.T) {
 	// The routes exist, and a stranger is turned away by the session guard
 	// rather than by a missing route.
 	check(http.MethodPost, "/api/script-test-runs", false, http.StatusUnauthorized)
+	check(http.MethodPost, "/api/executions/1/retry-successor", false, http.StatusUnauthorized)
 	check(http.MethodGet, "/api/script-test-runs/abc/logs", false, http.StatusUnauthorized)
 
 	// A token can read execution history; it cannot start or watch test runs.

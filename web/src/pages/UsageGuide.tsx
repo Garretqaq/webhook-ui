@@ -240,6 +240,8 @@ const execFields = [
   { key: 'hook_id', name: 'hook_id', desc: '触发的 Hook' },
   { key: 'trigger_source', name: 'trigger_source', desc: '调用方 IP' },
   { key: 'exec_target', name: 'exec_target', desc: 'local，或 SSH 主机的 user@host:port' },
+  { key: 'success_status', name: 'success_status', desc: '成功后交接状态：pending / dispatched / failed / interrupted；不改变主任务状态' },
+  { key: 'parent_execution_id', name: 'parent_execution_id', desc: '来源执行 ID，0 表示没有上游；在执行详情查看关联和手动重跑后续 Hook' },
   { key: 'status', name: 'status', desc: 'queued / running / success / failed / timeout / canceled / interrupted' },
   { key: 'output', name: 'output / error', desc: '输出与错误；仅详情接口返回，列表省略，按 LOG_TAIL_BYTES 截尾' },
   { key: 'started_at', name: 'started_at / finished_at', desc: '起止时间（RFC3339），未结束时 finished_at 缺省' },

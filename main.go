@@ -146,6 +146,7 @@ func buildRouter(cfg *config.Config) (*gin.Engine, error) {
 		auth.GET("/executions/:id", executionHandler.Get)
 		auth.GET("/executions/:id/logs", executionHandler.Logs)
 		auth.POST("/executions/:id/cancel", executionHandler.Cancel)
+		auth.POST("/executions/:id/retry-successor", webhookHandler.RetrySuccessor)
 
 		auth.GET("/scripts", scriptHandler.List)
 		auth.POST("/scripts", scriptHandler.Create)

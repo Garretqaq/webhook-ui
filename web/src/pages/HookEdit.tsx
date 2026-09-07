@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Form, Input, InputNumber, Select, Button, Card, message, Space, Radio, Switch } from 'antd'
 import { useNavigate, useParams } from 'react-router-dom'
 import { hookApi, scriptApi, sshHostApi } from '../api/client'
-import type { Script, SSHHost } from '../api/client'
+import type { Script, SSHHost, Hook } from '../api/client'
 
 const { TextArea } = Input
 
@@ -10,6 +10,8 @@ export default function HookEdit() {
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
   const [isNew, setIsNew] = useState(true)
+  const [hooks, setHooks] = useState<Hook[]>([])
+  const successor = Form.useWatch('success_hook_id', form)
   const [scripts, setScripts] = useState<Script[]>([])
   const [sshHosts, setSSHHosts] = useState<SSHHost[]>([])
   const execMode = Form.useWatch('exec_mode', form)
@@ -19,6 +21,7 @@ export default function HookEdit() {
   const { id } = useParams()
 
   useEffect(() => {
+    hookApi.list().then(res => setHooks(res.data)).catch(() => message.error('加载后续 Hook 列表失败'))
     scriptApi.list().then(res => setScripts(res.data)).catch(() => {})
     sshHostApi.list().then(res => setSSHHosts(res.data)).catch(() => {})
     if (id && id !== 'new') {
@@ -51,6 +54,8 @@ export default function HookEdit() {
       // mutual-exclusion rule can never trip on a form submission.
       const data = {
         ...values,
+        success_hook_id: values.success_hook_id || '',
+        success_body: values.success_hook_id ? values.success_body : '',
         command: useScript ? '' : values.command,
         script_id: useScript ? values.script_id : '',
         ssh_host_id: values.exec_location === 'ssh' ? values.ssh_host_id : '',
@@ -76,6 +81,17 @@ export default function HookEdit() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const createsCycle = (target: string) => {
+    const seen = new Set<string>(id && id !== 'new' ? [id] : [])
+    let next = target
+    while (next) {
+      if (seen.has(next)) return true
+      seen.add(next)
+      next = hooks.find(h => h.id === next)?.success_hook_id || ''
+    }
+    return false
   }
 
   return (
@@ -217,6 +233,19 @@ export default function HookEdit() {
             </Form.Item>
           )}
         </Form.Item>
+
+        <Form.Item name="success_hook_id" label="成功后触发" extra="选择已有 Hook；主任务成功后在服务端调度，后续失败不会改变主任务成功状态。试运行不触发。">
+          <Select showSearch allowClear optionFilterProp="label" placeholder="不触发后续任务"
+            options={hooks.map(h => ({ value: h.id, label: `${h.name} (${h.id})${createsCycle(h.id) ? ' — 循环引用' : ''}`, disabled: createsCycle(h.id) }))} />
+        </Form.Item>
+        {successor && (
+          <Form.Item name="success_body" label="后续请求体（JSON）" rules={[
+            { required: true, message: '请输入固定 JSON 请求体' },
+            { validator: (_, value) => { try { JSON.parse(value); return Promise.resolve() } catch { return Promise.reject(new Error('请输入有效 JSON')) } } },
+          ]} extra="按目标 Hook 的参数传递规则处理；不会透传主请求的请求头或查询参数。">
+            <TextArea rows={5} placeholder={'{"command":"hibernate","desktop_id":"你的桌面 ID"}'} />
+          </Form.Item>
+        )}
 
         <Form.Item name="response_message" label="成功响应消息">
           {/* Chrome autofills a saved username into any plain text input that

@@ -6,6 +6,8 @@ const client = axios.create({
 })
 
 export interface Hook {
+  success_hook_id: string
+  success_body: string
   id: string
   name: string
   command: string
@@ -34,6 +36,14 @@ export interface HookListItem extends Hook {
 }
 
 export interface Execution {
+  parent_execution_id: number
+  success_hook_id: string
+  success_body?: string
+  success_status: string
+  success_error: string
+  success_execution_id: number
+  success_attempt: number
+  success_executions?: Pick<Execution, 'id' | 'hook_id' | 'status'>[]
   id: number
   hook_id: string
   trigger_source: string
@@ -120,6 +130,7 @@ export const executionApi = {
   logs: (id: number, afterSeq: number) =>
     client.get<ExecutionLogs>(`/executions/${id}/logs`, { params: { after_seq: afterSeq } }),
   cancel: (id: number) => client.post(`/executions/${id}/cancel`),
+  retrySuccessor: (id: number, attempt: number) => client.post(`/executions/${id}/retry-successor`, { attempt }),
 }
 
 export const scriptApi = {

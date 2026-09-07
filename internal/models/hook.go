@@ -38,6 +38,8 @@ func (s StringArray) Value() (driver.Value, error) {
 }
 
 type Hook struct {
+	SuccessHookID   string      `json:"success_hook_id"`
+	SuccessBody     string      `json:"success_body"`
 	ID              string      `json:"id"`
 	Name            string      `json:"name"`
 	Command         string      `json:"command"`
@@ -61,6 +63,9 @@ type Hook struct {
 }
 
 func (h *Hook) Validate() error {
+	if h.SuccessHookID != "" && !json.Valid([]byte(h.SuccessBody)) {
+		return errors.New("成功后触发的请求体必须是有效 JSON")
+	}
 	if h.ID == "" {
 		return errors.New("id is required")
 	}

@@ -37,18 +37,7 @@ func NewWebhookHandler(executor *services.Executor, logTailBytes int, runner *Ru
 func (h *WebhookHandler) Trigger(c *gin.Context) {
 	hookID := c.Param("id")
 
-	var hook models.Hook
-	err := database.DB.QueryRow(`
-		SELECT id, name, command, script_id, ssh_host_id, working_dir, response_message,
-		       hmac_secret, hmac_algorithm, trigger_token, pass_arguments, pass_headers, pass_payload_to,
-		       async, timeout_seconds
-		FROM hooks WHERE id = ?
-	`, hookID).Scan(
-		&hook.ID, &hook.Name, &hook.Command, &hook.ScriptID, &hook.SSHHostID, &hook.WorkingDir,
-		&hook.ResponseMessage, &hook.HMACSecret, &hook.HMACAlgorithm, &hook.TriggerToken,
-		&hook.PassArguments, &hook.PassHeaders, &hook.PassPayloadTo,
-		&hook.Async, &hook.TimeoutSeconds,
-	)
+	hook, err := loadChainHook(database.DB, hookID)
 
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "hook not found"})
@@ -93,22 +82,27 @@ func (h *WebhookHandler) Trigger(c *gin.Context) {
 		}
 	}
 
-	env, args := h.buildCommandInput(&hook, c, payload)
+	env, args := h.buildCommandInput(hook, c, payload)
 
 	if hook.Async {
-		h.triggerAsync(c, &hook, env, args)
+		h.triggerAsync(c, hook, env, args)
 		return
 	}
 
-	execID := h.logExecutionStart(hookID, c.ClientIP(), execTarget(hook.SSHHostID), models.StatusRunning)
+	execID, err := startHookExecution(database.DB, hook, c.ClientIP(), models.StatusRunning, 0, []string{hook.ID})
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
 
-	result := h.execute(&hook, env, args, h.execOptions(&hook, execID, nil))
+	result := h.execute(hook, env, args, h.execOptions(hook, execID, nil))
 
 	status := models.StatusSuccess
 	if !result.Success {
 		status = models.StatusFailed
 	}
-	h.logExecutionEnd(execID, status, result.Output, result.Error)
+	h.finishHookExecution(execID, status, result.Output, result.Error)
+	h.dispatchSuccess(execID)
 
 	if result.Success {
 		c.JSON(http.StatusOK, gin.H{
@@ -241,54 +235,13 @@ func (h *WebhookHandler) triggerAsync(c *gin.Context, hook *models.Hook, env map
 		return
 	}
 
-	execID := h.logExecutionStart(hook.ID, c.ClientIP(), execTarget(hook.SSHHostID), models.StatusQueued)
-	if execID == 0 {
+	execID, err := startHookExecution(database.DB, hook, c.ClientIP(), models.StatusQueued, 0, []string{hook.ID})
+	if err != nil {
 		slot.Release()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record execution"})
 		return
 	}
-	slot.SetExecution(execID)
-
-	cancel := h.cancels.Register(execID)
-
-	go func() {
-		defer slot.Release()
-		defer h.cancels.Unregister(execID)
-		// The request has already been answered, so nothing is left to turn a
-		// panic into a response — and unlike the synchronous path there is no
-		// gin recovery middleware on this stack to stop it taking the process
-		// down with it.
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("execution %d panicked: %v", execID, r)
-				h.logExecutionEnd(execID, models.StatusFailed, "", fmt.Sprintf("execution panicked: %v", r))
-			}
-		}()
-
-		opts := h.execOptions(hook, execID, cancel)
-
-		// Cancelled while waiting behind a full queue: nothing ever started, so
-		// there is nothing to kill and no output to keep.
-		if !h.runner.Start(cancel) {
-			markCanceled(opts.Sink)
-			h.logExecutionEnd(execID, models.StatusCanceled, "", "canceled before it started")
-			return
-		}
-		defer h.runner.Finish()
-
-		h.markRunning(execID)
-		result := h.execute(hook, env, args, opts)
-
-		status := models.StatusSuccess
-		switch {
-		case result.Canceled:
-			status = models.StatusCanceled
-			markCanceled(opts.Sink)
-		case !result.Success:
-			status = models.StatusFailed
-		}
-		h.logExecutionEnd(execID, status, result.Output, result.Error)
-	}()
+	h.launchHook(hook, execID, env, args, slot)
 
 	c.JSON(http.StatusAccepted, gin.H{
 		"message":      hook.ResponseMessage,
@@ -315,4 +268,55 @@ func markCanceled(sink services.LogSink) {
 		return
 	}
 	sink.WriteChunk(services.StreamStderr, "\n--- 已被手动中断 ---\n")
+}
+
+func (h *WebhookHandler) launchHook(hook *models.Hook, execID int64, env map[string]string, args []string, slot *Slot) {
+	slot.SetExecution(execID)
+
+	cancel := h.cancels.Register(execID)
+
+	h.runner.wg.Add(1) // Keep WaitIdle tracking the handoff after admission is released.
+	go func() {
+		defer h.runner.wg.Done()
+		func() {
+			defer slot.Release()
+			defer h.cancels.Unregister(execID)
+			// The request has already been answered, so nothing is left to turn a
+			// panic into a response — and unlike the synchronous path there is no
+			// gin recovery middleware on this stack to stop it taking the process
+			// down with it.
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("execution %d panicked: %v", execID, r)
+					h.logExecutionEnd(execID, models.StatusFailed, "", fmt.Sprintf("execution panicked: %v", r))
+				}
+			}()
+
+			opts := h.execOptions(hook, execID, cancel)
+
+			// Cancelled while waiting behind a full queue: nothing ever started, so
+			// there is nothing to kill and no output to keep.
+			if !h.runner.Start(cancel) {
+				markCanceled(opts.Sink)
+				h.logExecutionEnd(execID, models.StatusCanceled, "", "canceled before it started")
+				return
+			}
+			defer h.runner.Finish()
+
+			h.markRunning(execID)
+			result := h.execute(hook, env, args, opts)
+
+			status := models.StatusSuccess
+			switch {
+			case result.Canceled:
+				status = models.StatusCanceled
+				markCanceled(opts.Sink)
+			case !result.Success:
+				status = models.StatusFailed
+			}
+			h.finishHookExecution(execID, status, result.Output, result.Error)
+		}()
+		h.dispatchSuccess(execID)
+	}()
+
 }

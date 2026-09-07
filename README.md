@@ -445,3 +445,31 @@ npm run lint            # oxlint
 ## 📝 License
 
 MIT
+
+### 成功后触发另一个 Hook
+
+复用现有 Hook 列表，无需创建另一类 Hook。在主 Hook 编辑页的「成功后触发」选择已有 Hook，并填写固定 JSON 请求体；清空选择即关闭。后续任务复用目标 Hook 当前的脚本、执行位置、超时及参数传递规则。内部按 Hook ID 调度，不需要本系统的 URL 或 Token，不透传上游请求头、查询参数或原始请求体。
+
+例如先创建或复用「休眠机器」Hook，再将「Rewards」Hook 的成功后触发设置为它，请求体填写：
+
+```json
+{"command":"hibernate","desktop_id":"你的桌面 ID"}
+```
+
+Windows 脚本删除休眠请求，npm 结束后保存 `$LASTEXITCODE` 并 `exit $code`。webhook-ui 服务端在关闭主任务 SSH、保存成功结果和释放并发名额后，才将休眠任务加入队列。休眠 Hook 应在不会被此次休眠影响的服务端执行；webhook-ui 服务端也必须运行在另一台不会一起休眠的机器上。
+
+- 仅成功触发；失败、超时、取消和脚本编辑页「试运行」均不触发。
+- 后续任务始终通过异步队列调度，即使目标 Hook 对外配置为同步，也不会让上游等待其脚本结束；仍使用目标的超时设置并遵守队列容量和同 Hook 并发限制。
+- 支持 A → B → C。保存配置时拒绝自引用或循环引用，运行期间修改配置也不能让当前执行链重复进入已执行的 Hook。
+- 被引用的 Hook 删除前必须先解除关联。主任务启动时保存后续目标和 JSON 快照；之后修改主 Hook 配置不会改变本次交接。目标 Hook 的执行配置在调度时读取。
+- 两次执行分别记录状态，后续失败不会把主任务的 `success` 改为 `failed`。在执行详情通过「来源执行」「后续执行」相互跳转。
+- 交接状态为等待调度（`pending`）、已创建后续执行（`dispatched`）、调度失败（`failed`）或交接中断（`interrupted`）。已创建不表示后续脚本已成功，应查看该执行自身状态。
+- 不自动重试或重启补发。重启会将未交接的记录标为中断，已创建的执行保留关联并按既有规则标记中断。远端进程可能仍在运行，可结合目标实际状态决定是否手动重跑。
+- 调度或后续执行失败后，在主执行详情点击「仅重跑后续 Hook」。使用原交接目标及原始 JSON，复用目标当前配置，创建新的关联记录，上游任务不会重跑。正常执行和重跑成功后都继续成功链。
+- 历史记录仍遵守保留周期；等待交接的记录暂不清理。历史已清理时关联链接可能不可用，无法确认后续状态时不提供盲目重跑。
+
+Hook API 新增 `success_hook_id`（默认空）和 `success_body`（JSON 文本字符串）。选择后续 Hook 时必须提供有效 JSON；配置接口会校验目标存在及无循环。
+
+执行详情新增 `parent_execution_id`、`success_hook_id`、`success_body`、`success_status`、`success_error`、`success_execution_id`、`success_attempt` 和 `success_executions`。`success_execution_id` 指向最近一次已创建的后续执行，`success_executions` 保留各次实际执行；新的调度尝试失败时，最近一次已创建的执行仍可能指向上次尝试，判断当前交接应同时查看 `success_status`。
+
+登录会话可调用 `POST /api/executions/:id/retry-successor`，请求体为 `{"attempt": 当前详情中的success_attempt}`。每次尝试递增序号，旧序号或并发重复请求返回 409，避免重复启动。成功返回 202 及新 `execution_id`。只读外部 Token 不具备重跑权限。

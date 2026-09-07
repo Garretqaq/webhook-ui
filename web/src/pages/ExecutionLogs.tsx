@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Table, Tag, Button, Modal, Typography, Select, Space, Popconfirm, message, Alert } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { executionApi, hookApi } from '../api/client'
@@ -6,6 +6,8 @@ import type { Execution, Hook } from '../api/client'
 import ExecutionLogView from '../components/ExecutionLogView'
 
 const { Paragraph, Text } = Typography
+
+const handoffLabels: Record<string, string> = { pending: '等待调度', dispatched: '已创建后续执行', failed: '调度失败', interrupted: '交接中断' }
 
 const statusColors: Record<string, string> = {
   success: 'green',
@@ -26,7 +28,9 @@ export default function ExecutionLogs() {
   const [selectedHook, setSelectedHook] = useState<string>()
   const [detailVisible, setDetailVisible] = useState(false)
   const [currentExecution, setCurrentExecution] = useState<Execution>()
+  const [retrying, setRetrying] = useState(false)
   const [detailError, setDetailError] = useState(false)
+  const detailID = useRef<number | undefined>(undefined)
 
   const loadData = async () => {
     setLoading(true)
@@ -48,12 +52,25 @@ export default function ExecutionLogs() {
     loadData()
   }, [selectedHook])
 
+  useEffect(() => {
+    if (!detailVisible || !currentExecution) return
+    const id = currentExecution.id
+    let active = true
+    const timer = setInterval(() => {
+      executionApi.get(id).then(res => {
+        if (active && detailID.current === id) setCurrentExecution(res.data)
+      }).catch(() => {})
+    }, 2000)
+    return () => { active = false; clearInterval(timer) }
+  }, [detailVisible, currentExecution?.id])
+
   const getHookName = (hookId: string) => {
     const hook = hooks.find(h => h.id === hookId)
     return hook ? hook.name : hookId
   }
 
   const showDetail = (record: Execution) => {
+    detailID.current = record.id
     setCurrentExecution(record)
     setDetailVisible(true)
     setDetailError(false)
@@ -64,11 +81,39 @@ export default function ExecutionLogs() {
     executionApi
       .get(record.id)
       .then(res => {
-        if (currentExecution?.id === res.data.id) setCurrentExecution(res.data)
+        if (detailID.current === res.data.id) setCurrentExecution(res.data)
       })
       .catch(() => {
-        if (currentExecution?.id === record.id) setDetailError(true)
+        if (detailID.current === record.id) setDetailError(true)
       })
+  }
+
+  const openExecution = async (id: number) => {
+    detailID.current = id
+    try {
+      const res = await executionApi.get(id)
+      if (detailID.current === id) showDetail(res.data)
+    } catch { if (detailID.current === id) message.error('执行记录不可用，可能已被清理') }
+  }
+
+  const canRetrySuccessor = (execution: Execution) => {
+    if (execution.status !== 'success' || !execution.success_hook_id) return false
+    if (['failed', 'interrupted'].includes(execution.success_status)) return true
+    const latest = execution.success_executions?.find(child => child.id === execution.success_execution_id)
+    return execution.success_status === 'dispatched' && !!latest && ['failed', 'canceled', 'interrupted', 'timeout'].includes(latest.status)
+  }
+
+  const retrySuccessor = async (execution: Execution) => {
+    setRetrying(true)
+    try {
+      await executionApi.retrySuccessor(execution.id, execution.success_attempt)
+      message.success('已创建后续执行')
+    } catch (error: any) { message.error(error.response?.data?.error || '重跑失败') }
+    finally {
+      if (detailID.current === execution.id) await openExecution(execution.id)
+      setRetrying(false)
+      loadData()
+    }
   }
 
   const cancelExecution = async (id: number) => {
@@ -198,7 +243,7 @@ export default function ExecutionLogs() {
         title="执行详情"
         width={760}
         open={detailVisible}
-        onCancel={() => setDetailVisible(false)}
+        onCancel={() => { detailID.current = undefined; setDetailVisible(false) }}
         footer={null}
         destroyOnClose
       >
@@ -222,6 +267,21 @@ export default function ExecutionLogs() {
               <Text strong>来源: </Text>
               {currentExecution.trigger_source}
             </Paragraph>
+            {currentExecution.parent_execution_id > 0 && (
+              <Paragraph>来源执行：<Button type="link" onClick={() => openExecution(currentExecution.parent_execution_id)}>#{currentExecution.parent_execution_id}</Button></Paragraph>
+            )}
+            {currentExecution.success_hook_id && (
+              <div>
+                <Paragraph>成功后触发：{getHookName(currentExecution.success_hook_id)} — {handoffLabels[currentExecution.success_status] || (currentExecution.status === 'running' || currentExecution.status === 'queued' ? '等待主任务结束' : '未触发')}</Paragraph>
+                {currentExecution.success_error && <Alert type="error" showIcon message={currentExecution.success_error} />}
+                {canRetrySuccessor(currentExecution) && <Button loading={retrying} onClick={() => retrySuccessor(currentExecution)}>仅重跑后续 Hook</Button>}
+                {currentExecution.success_body && <Paragraph><Text strong>原始后续请求体：</Text><pre style={{ whiteSpace: 'pre-wrap' }}>{currentExecution.success_body}</pre></Paragraph>}
+                {currentExecution.success_executions?.map(child => (
+                  <Paragraph key={child.id}>后续执行：<Button type="link" onClick={() => openExecution(child.id)}>#{child.id} {getHookName(child.hook_id)}</Button><Tag color={statusColors[child.status]}>{child.status}</Tag></Paragraph>
+                ))}
+              </div>
+            )}
+            <Button onClick={() => openExecution(currentExecution.id)}>刷新详情</Button>
             <Paragraph>
               <Text strong>开始时间: </Text>
               {new Date(currentExecution.started_at).toLocaleString()}
