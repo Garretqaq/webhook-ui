@@ -258,6 +258,9 @@ export default function ExecutionLogs() {
       >
         {currentExecution && (
           <div>
+            <Paragraph style={{ float: 'right' }}>
+              <Button onClick={() => openExecution(currentExecution.id)}>刷新详情</Button>
+            </Paragraph>
             <Paragraph>
               <Text strong>Hook: </Text>
               {getHookName(currentExecution.hook_id)}
@@ -290,7 +293,6 @@ export default function ExecutionLogs() {
                 ))}
               </div>
             )}
-            <Button onClick={() => openExecution(currentExecution.id)}>刷新详情</Button>
             <Paragraph>
               <Text strong>开始时间: </Text>
               {new Date(currentExecution.started_at).toLocaleString()}
