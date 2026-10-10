@@ -4,19 +4,75 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/songguangzhi/webhook-ui/internal/database"
 )
 
-// SettingsHandler manages the single-instance settings. Today that is the
-// external API token; the settings table is generic so a later setting does
-// not need another migration.
-type SettingsHandler struct{}
+// SettingsHandler manages the single-instance settings: the external API
+// token and the execution-log retention policy. The settings table is generic
+// so a later setting does not need another migration.
+type SettingsHandler struct {
+	retention *RetentionController
+	// retentionMu serializes saving the policy with applying it, so two
+	// concurrent updates cannot leave the running sweep on an older policy
+	// than the one stored.
+	retentionMu sync.Mutex
+}
 
-func NewSettingsHandler() *SettingsHandler {
-	return &SettingsHandler{}
+// NewSettingsHandler takes the controller that a saved retention policy is
+// applied to; nil only persists it (for tests that do not need the sweep).
+func NewSettingsHandler(retention *RetentionController) *SettingsHandler {
+	return &SettingsHandler{retention: retention}
+}
+
+// GetRetention returns the execution-log cleanup policy.
+func (h *SettingsHandler) GetRetention(c *gin.Context) {
+	s, err := LoadRetentionSettings()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, s)
+}
+
+// retentionRequest is the PUT body. The fields are pointers so a body that
+// omits one is rejected instead of read as a zero value — an omitted
+// "enabled" would otherwise quietly disable cleanup.
+type retentionRequest struct {
+	Enabled *bool `json:"enabled"`
+	Days    *int  `json:"days"`
+}
+
+// UpdateRetention validates, persists and immediately applies the policy.
+func (h *SettingsHandler) UpdateRetention(c *gin.Context) {
+	var req retentionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.Enabled == nil || req.Days == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled and days are both required"})
+		return
+	}
+	s := RetentionSettings{Enabled: *req.Enabled, Days: *req.Days}
+	if s.Days < minRetentionDays || s.Days > maxRetentionDays {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("days must be between %d and %d", minRetentionDays, maxRetentionDays)})
+		return
+	}
+	h.retentionMu.Lock()
+	defer h.retentionMu.Unlock()
+	if err := SaveRetentionSettings(s); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if h.retention != nil {
+		h.retention.Apply(s)
+	}
+	c.JSON(http.StatusOK, s)
 }
 
 // GetAPIToken reports whether a token exists and, if so, what it is. It is

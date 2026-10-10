@@ -352,7 +352,7 @@ const apiContent = (
           <ul>
             <li>已脱离 SSH 会话的远端进程（例如 Windows 上用 Start-Process 启动的看门狗）中断不到</li>
             <li>stdout/stderr 的交错顺序只保证「读到的顺序」，极近的两行可能因缓冲有轻微不确定性</li>
-            <li>执行记录按 <Text code>RETENTION_DAYS</Text>（默认 30 天）保留，过期连同日志删除</li>
+            <li>执行记录默认永久保留；可在「设置」页开启自动清理，过期记录连同日志删除</li>
           </ul>
         </Typography>
   </>

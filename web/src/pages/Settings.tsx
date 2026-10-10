@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Card, Button, Typography, message, Space, Alert, Popconfirm, Input } from 'antd'
+import { Card, Button, Typography, message, Space, Alert, Popconfirm, Input, InputNumber, Switch } from 'antd'
 import { ReloadOutlined, CopyOutlined } from '@ant-design/icons'
 import { settingsApi } from '../api/client'
 
@@ -9,6 +9,10 @@ export default function Settings() {
   const [token, setToken] = useState('')
   const [configured, setConfigured] = useState(false)
   const [loading, setLoading] = useState(false)
+
+  const [retentionEnabled, setRetentionEnabled] = useState(false)
+  const [retentionDays, setRetentionDays] = useState<number | null>(30)
+  const [savingRetention, setSavingRetention] = useState(false)
 
   const load = async () => {
     try {
@@ -20,9 +24,41 @@ export default function Settings() {
     }
   }
 
+  const loadRetention = async () => {
+    try {
+      const { data } = await settingsApi.getRetention()
+      setRetentionEnabled(data.enabled)
+      setRetentionDays(data.days)
+    } catch {
+      message.error('加载自动清理设置失败')
+    }
+  }
+
   useEffect(() => {
     load()
+    loadRetention()
   }, [])
+
+  const saveRetention = async () => {
+    if (!retentionDays || retentionDays < 1 || retentionDays > 3650) {
+      message.error('保留天数需在 1 ~ 3650 之间')
+      return
+    }
+    setSavingRetention(true)
+    try {
+      const { data } = await settingsApi.updateRetention({
+        enabled: retentionEnabled,
+        days: retentionDays,
+      })
+      setRetentionEnabled(data.enabled)
+      setRetentionDays(data.days)
+      message.success('已保存')
+    } catch {
+      message.error('保存失败')
+    } finally {
+      setSavingRetention(false)
+    }
+  }
 
   const regenerate = async () => {
     setLoading(true)
@@ -49,6 +85,7 @@ export default function Settings() {
   }
 
   return (
+    <Space direction="vertical" size="large" style={{ width: '100%' }}>
     <Card title="API Token">
       <Alert
         type="warning"
@@ -97,5 +134,34 @@ export default function Settings() {
         </Paragraph>
       )}
     </Card>
+
+    <Card title="执行日志自动清理">
+      <Paragraph type="secondary">
+        开启后每天自动清理超过 {retentionDays ?? '-'} 天的已结束执行记录及日志，运行中的记录不受影响。
+        保存后立即生效并执行一次清理。
+      </Paragraph>
+      <Space size="large" wrap>
+        <Space>
+          <Text>自动清理</Text>
+          <Switch checked={retentionEnabled} onChange={setRetentionEnabled} />
+        </Space>
+        <Space>
+          <Text>保留天数</Text>
+          <InputNumber
+            min={1}
+            max={3650}
+            precision={0}
+            value={retentionDays}
+            onChange={(v) => setRetentionDays(v)}
+            disabled={!retentionEnabled}
+            addonAfter="天"
+          />
+        </Space>
+        <Button type="primary" loading={savingRetention} onClick={saveRetention}>
+          保存
+        </Button>
+      </Space>
+    </Card>
+    </Space>
   )
 }

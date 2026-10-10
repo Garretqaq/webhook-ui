@@ -164,10 +164,18 @@ export const sshHostApi = {
   test: (host: Partial<SSHHost>) => client.post<SSHHostTestResult>('/ssh-hosts/test', host),
 }
 
+export interface RetentionSettings {
+  enabled: boolean
+  days: number
+}
+
 export const settingsApi = {
   getAPIToken: () => client.get<{ configured: boolean; token: string }>('/settings/api-token'),
   regenerateAPIToken: () =>
     client.post<{ configured: boolean; token: string }>('/settings/api-token/regenerate'),
+  getRetention: () => client.get<RetentionSettings>('/settings/retention'),
+  updateRetention: (data: RetentionSettings) =>
+    client.put<RetentionSettings>('/settings/retention', data),
 }
 
 export default client

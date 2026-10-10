@@ -101,7 +101,6 @@ curl -X POST http://localhost:9000/hooks/<hook-id> \
 | `LOG_TAIL_BYTES` | 单次执行日志按尾部保留的上限（字节），超出滚删旧块 | `5242880`（5MB） |
 | `MAX_CONCURRENT_EXECUTIONS` | 异步 Hook 同时运行上限 | `10` |
 | `MAX_QUEUED_EXECUTIONS` | 超出并发后允许排队的数量，再满返回 429 | `100` |
-| `RETENTION_DAYS` | 执行记录与日志保留天数，0 表示不清理 | `30` |
 
 > **登录防爆破**：同一用户名+IP 连续失败锁定（默认 5 次锁 15 分钟，返回 429）；`/api/login` 每 IP 每分钟最多 10 次。锁定状态存内存，重启清零。
 >
@@ -398,8 +397,12 @@ webhook-ui/
 |------|-----------|----------|
 | `GET /api/settings/api-token` | — | `200 {"configured", "token"}`（未生成时 `configured: false`） |
 | `POST /api/settings/api-token/regenerate` | — | `200 {"configured": true, "token"}` |
+| `GET /api/settings/retention` | — | `200 {"enabled", "days"}` |
+| `PUT /api/settings/retention` | `{"enabled", "days"}` | `200 {"enabled", "days"}` |
 
 重新生成后，旧 token 立即对全部外部调用方失效。
+
+执行日志自动清理默认关闭（`days` 默认 `30`）。开启后每次保存立即生效并执行一次清理，之后每 24 小时清理一次；`days` 需为 `1` ~ `3650` 的整数，越界返回 `400`。运行中的执行、等待成功回调的记录，以及被保留记录引用的祖先记录都不会被删除。
 
 ### 外部只读 API（凭 API token）
 

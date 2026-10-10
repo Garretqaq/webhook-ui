@@ -85,7 +85,7 @@ func TestRegeneratingTheTokenRevokesTheOldOneImmediately(t *testing.T) {
 	setupExecDB(t)
 	r := buildExternalRouter(t, APIToken)
 
-	h := NewSettingsHandler()
+	h := NewSettingsHandler(nil)
 	gin.SetMode(gin.TestMode)
 	admin := gin.New()
 	admin.POST("/settings/api-token/regenerate", h.RegenerateAPIToken)

@@ -106,14 +106,17 @@ func buildRouter(cfg *config.Config) (*gin.Engine, error) {
 
 	runner := handlers.NewRunner(cfg.MaxConcurrentExecutions, cfg.MaxQueuedExecutions)
 	cancels := handlers.NewCancelRegistry()
-	handlers.StartRetentionSweep(cfg.RetentionDays, nil)
+	retention := handlers.NewRetentionController(nil)
+	if err := retention.ApplyStored(); err != nil {
+		log.Printf("load retention settings: %v", err)
+	}
 	webhookHandler := handlers.NewWebhookHandler(executor, cfg.LogTailBytes, runner, cancels)
 	executionHandler := handlers.NewExecutionHandler(cancels)
 	testRuns := handlers.NewTestRunRegistry(cfg.LogTailBytes)
 	handlers.StartTestRunSweep(testRuns)
 	scriptHandler := handlers.NewScriptHandler(executor, cfg.LogTailBytes, testRuns)
 	sshHostHandler := handlers.NewSSHHostHandler()
-	settingsHandler := handlers.NewSettingsHandler()
+	settingsHandler := handlers.NewSettingsHandler(retention)
 
 	r.POST("/api/auth/login", middleware.LoginRateLimit(loginLimiter), authHandler.Login)
 	r.GET("/api/auth/check", authHandler.Check)
@@ -170,6 +173,8 @@ func buildRouter(cfg *config.Config) (*gin.Engine, error) {
 
 		auth.GET("/settings/api-token", settingsHandler.GetAPIToken)
 		auth.POST("/settings/api-token/regenerate", settingsHandler.RegenerateAPIToken)
+		auth.GET("/settings/retention", settingsHandler.GetRetention)
+		auth.PUT("/settings/retention", settingsHandler.UpdateRetention)
 	}
 
 	return r, nil
